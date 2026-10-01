@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "channel": "stable",
+  "version": "0.1.0",
+  "public_repository": "lkhkhk/AgentCollab-Public",
+  "private_source": {
+    "repository": "lkhkhk/AgentCollab",
+    "commit": "3980ee450f373f36cc516ae0b9c49790083973c0",
+    "path": "deploy/guided_installer.py"
+  },
+  "artifact": {
+    "name": "agentcollab-installer.py",
+    "url": "https://github.com/lkhkhk/AgentCollab-Public/releases/download/v0.1.0/agentcollab-installer.py",
+    "sha256": "8362c41f67bc9555b0b2e045423cd15576bd4d2b8b5dc8e672e34cbe28872a2c"
+  }
+}
