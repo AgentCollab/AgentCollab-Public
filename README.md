@@ -12,4 +12,10 @@ cd AgentCollab-Public
 
 The launcher downloads the versioned installer, validates its manifest and SHA-256, and starts it only after verification. The installer then guides GitHub authentication, prerequisites, source acquisition, configuration, and canonical setup as needed. You do not need a private AgentCollab checkout to start.
 
+## Provenance
+
+`installer-manifest.json` is the authoritative distribution metadata for the published installer. Its `private_source.repository`, `private_source.commit`, and `private_source.path` identify the exact private source revision used to produce the public installer artifact; `install.sh` pins the same version/source identity and refuses a mismatch.
+
+That source commit is **artifact provenance**, not an assertion that it is the current private AgentCollab Production `main`. Production deployment and installer-artifact publication have separate release evidence. To determine the exact relationship for a published version, read the versioned manifest rather than assuming the latest private branch or `main`.
+
 See [INSTALL.md](INSTALL.md) for starting requirements and result states.
