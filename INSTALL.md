@@ -18,6 +18,12 @@ From a clone of [AgentCollab-Public](https://github.com/lkhkhk/AgentCollab-Publi
 
 The launcher verifies the pinned release manifest and artifact SHA-256 before it executes the installer. It removes its temporary download directory on exit.
 
+## Verify which private source this installer came from
+
+The versioned `installer-manifest.json` records the exact private AgentCollab repository, commit, and source path used to build the installer artifact. `install.sh` validates that provenance together with the artifact URL and SHA-256 before execution.
+
+The recorded private source commit identifies the installer artifact's source. It does not by itself claim that the same commit is the currently deployed private AgentCollab Production `main`. Treat the manifest as distribution provenance and use the private release/Production evidence separately when comparing product deployment state.
+
 ## Installer states
 
 - `ACTION_REQUIRED`: an operator action or prerequisite is needed; follow the printed next step and rerun safely.
