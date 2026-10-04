@@ -1,9 +1,32 @@
-# 설치 안내 (v0.2.0-beta.2 Beta metadata candidate)
+# Install AgentCollab
 
-1. GitHub CLI를 설치하고 `gh auth login`으로 인증합니다.
-2. 계정이 private `AgentCollab/AgentCollab-Distribution` 저장소에 접근할 수 있는지 확인합니다. 접근 권한이 없으면 저장소 소유자에게 요청하세요.
-3. 원하는 디렉터리로 이동하고 `install.sh plan`을 실행합니다. 기본 설치 위치는 현재 디렉터리의 `./agentcollab`입니다. `--installation-root <path>`를 지정하면 해당 경로를 사용합니다.
-4. 출력된 계획과 필요한 prerequisite를 검토합니다. 설치 진행 시 `install.sh apply --approved-plan-sha256 <PLAN_SHA256>`을 실행합니다.
-5. 설치 후 `install.sh verify`를 실행합니다.
+1. Clone this Public repository and run `./install.sh` from its root. The launcher verifies that its files match the same checked-out Public commit.
+2. Install GitHub CLI and authenticate with `gh auth login`.
+3. Confirm the selected identity can read private `AgentCollab/AgentCollab-Distribution`.
+4. Review a plan before applying it:
 
-Private package 접근은 `gh`의 기존 인증을 사용합니다. PAT를 복사해 넣거나 비밀번호를 자동 전달하지 않습니다. PLAN은 Runtime/Execution ZIP의 전체 SHA-256, release provenance, 상호 호환성, packaged `deploy/setup.py` digest를 확인한 뒤 setup engine을 실행합니다. 다운로드/검증 자료는 임시 디렉터리에서 처리하고 종료 시 정리합니다.
+   ```sh
+   ./install.sh plan
+   ./install.sh plan --channel beta
+   ./install.sh plan --version VERSION
+   ```
+
+   No selector uses `channels/default.json`. A channel selector uses that channel's pointer. `--version` reads the exact immutable version record and bypasses channel pointers. Combining `--version` and `--channel` is blocked.
+
+5. Apply only the reviewed plan, passing its `plan_sha256`:
+
+   ```sh
+   ./install.sh apply --approved-plan-sha256 PLAN_SHA256 --version VERSION
+   ```
+
+   Use the exact `resolved_version` shown during PLAN. This prevents a changed channel pointer from silently selecting a different candidate.
+
+6. Verify with the same exact version:
+
+   ```sh
+   ./install.sh verify --version VERSION
+   ```
+
+If `--web-port` is omitted, it remains omitted when the bootstrap calls setup so setup can choose its implicit default/fallback. If explicitly supplied, the exact value is forwarded. The default installation root is `./agentcollab` relative to the current working directory; `--installation-root <path>` overrides it.
+
+Catalog reads use authenticated `gh api` calls. Distribution package downloads use the exact release tag in the resolved version record. Pointer, version-record, release-manifest, package, and source provenance checks fail closed; the installer does not fall back to another version.

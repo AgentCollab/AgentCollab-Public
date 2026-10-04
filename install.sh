@@ -1,53 +1,28 @@
 #!/bin/sh
 set -eu
 
-VERSION='v0.2.0-beta.2'
 PUBLIC_REPOSITORY='AgentCollab/AgentCollab-Public'
-MANIFEST_URL="https://raw.githubusercontent.com/${PUBLIC_REPOSITORY}/${VERSION}/installer-manifest.json"
-BOOTSTRAP_URL="https://github.com/${PUBLIC_REPOSITORY}/releases/download/${VERSION}/agentcollab-bootstrap.py"
 
-fail() { printf '%s\n' "AgentCollab installer: $1" >&2; exit 1; }
-command -v curl >/dev/null 2>&1 || fail 'curl is required.'
+fail() { printf '%s\n' "AgentCollab installer: $1" >&2; exit 2; }
 command -v python3 >/dev/null 2>&1 || fail 'Python 3 is required.'
-if command -v sha256sum >/dev/null 2>&1; then DIGEST_TOOL=sha256sum
-elif command -v shasum >/dev/null 2>&1; then DIGEST_TOOL=shasum
-else fail 'sha256sum or shasum is required.'; fi
+command -v git >/dev/null 2>&1 || fail 'Git is required; run install.sh from a Public repository checkout.'
 
-TMP_ROOT=${TMPDIR:-/tmp}
-DOWNLOAD_DIR=$(mktemp -d "${TMP_ROOT%/}/agentcollab-bootstrap.XXXXXXXX") || fail 'could not create a private temporary directory.'
-cleanup() { rm -rf "$DOWNLOAD_DIR"; }
-trap cleanup EXIT
-trap 'exit 129' HUP
-trap 'exit 130' INT
-trap 'exit 143' TERM
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd) || fail 'could not resolve installer directory.'
+REPOSITORY_ROOT=$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null) || \
+  fail 'run install.sh from a checked-out AgentCollab Public repository.'
+[ "$SCRIPT_DIR" = "$REPOSITORY_ROOT" ] || fail 'run install.sh from the Public repository root.'
 
-MANIFEST_FILE="$DOWNLOAD_DIR/installer-manifest.json"
-BOOTSTRAP_FILE="$DOWNLOAD_DIR/agentcollab-bootstrap.py"
-curl -fsSL --proto '=https' --tlsv1.2 --output "$MANIFEST_FILE" "$MANIFEST_URL" || fail 'could not retrieve the beta manifest.'
-EXPECTED_SHA=$(python3 - "$MANIFEST_FILE" "$VERSION" "$PUBLIC_REPOSITORY" <<'PY'
-import json, re, sys
-from pathlib import Path
-path, version, repository = sys.argv[1:]
-try:
-    value = json.loads(Path(path).read_text(encoding='utf-8'))
-    artifact = value['bootstrap']
-except (OSError, KeyError, TypeError, json.JSONDecodeError):
-    raise SystemExit('beta manifest is invalid')
-if (not isinstance(value, dict) or value.get('schema_version') != 1
-        or value.get('channel') != 'beta' or value.get('version') != version
-        or value.get('public_repository') != repository
-        or not isinstance(artifact, dict) or artifact.get('name') != 'agentcollab-bootstrap.py'):
-    raise SystemExit('beta identity is invalid')
-digest = artifact.get('sha256')
-if not isinstance(digest, str) or not re.fullmatch(r'[0-9a-f]{64}', digest):
-    raise SystemExit('bootstrap SHA-256 is invalid')
-print(digest)
-PY
-) || fail 'beta manifest validation failed.'
+# Keep launcher, generic metadata, and bootstrap tied to the same checked-out commit.
+for FILE in install.sh installer-manifest.json agentcollab-bootstrap.py; do
+  EXPECTED_BLOB=$(git -C "$REPOSITORY_ROOT" rev-parse "HEAD:$FILE" 2>/dev/null) || \
+    fail "current Public commit is missing $FILE."
+  ACTUAL_BLOB=$(git -C "$REPOSITORY_ROOT" hash-object "$REPOSITORY_ROOT/$FILE" 2>/dev/null) || \
+    fail "could not verify $FILE against the current Public commit."
+  [ "$EXPECTED_BLOB" = "$ACTUAL_BLOB" ] || \
+    fail 'installer files differ from the same committed Public revision; use a clean checkout.'
+done
 
-curl -fsSL --proto '=https' --tlsv1.2 --output "$BOOTSTRAP_FILE" "$BOOTSTRAP_URL" || fail 'could not retrieve the beta bootstrap.'
-if [ "$DIGEST_TOOL" = sha256sum ]; then DIGEST_LINE=$(sha256sum "$BOOTSTRAP_FILE")
-else DIGEST_LINE=$(shasum -a 256 "$BOOTSTRAP_FILE"); fi
-ACTUAL_SHA=${DIGEST_LINE%% *}
-[ "$ACTUAL_SHA" = "$EXPECTED_SHA" ] || fail 'bootstrap SHA-256 mismatch.'
-python3 "$BOOTSTRAP_FILE" --manifest "$MANIFEST_FILE" "$@"
+BOOTSTRAP_FILE="$REPOSITORY_ROOT/agentcollab-bootstrap.py"
+MANIFEST_FILE="$REPOSITORY_ROOT/installer-manifest.json"
+[ -f "$BOOTSTRAP_FILE" ] && [ -f "$MANIFEST_FILE" ] || fail 'generic Public installer files are incomplete.'
+exec python3 "$BOOTSTRAP_FILE" --manifest "$MANIFEST_FILE" "$@"
