@@ -20,12 +20,12 @@ def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def package(kind: str, setup: bytes = b"") -> bytes:
+def package(kind: str, setup: bytes = b"", contract: str = "1.0.0") -> bytes:
     managed = {"deploy/setup.py": setup} if kind == "runtime" else {"execution/task.json": b"{}"}
     manifest = {
-        "product": "AgentCollab", "release_version": "candidate-691-1a5def1-r2",
+        "product": "AgentCollab", "release_version": "v0.2.0-beta.1",
         "source": {"repository": "lkhkhk/AgentCollab", "commit": "1a5def1de57f8abccade2dcb4697fab26d1d45f5"},
-        "service_branch": "main", "execution_contract_version": "1.0.0",
+        "service_branch": "main", "execution_contract_version": contract,
         "managed_paths": list(managed), "files_sha256": {name: digest(data) for name, data in managed.items()},
     }
     result = io.BytesIO()
@@ -44,11 +44,11 @@ class BootstrapTests(unittest.TestCase):
         self.setup_bytes = b"# verified setup fixture\n"
         self.runtime = package("runtime", self.setup_bytes)
         self.execution = package("execution")
-        self.runtime_name = "agentcollab-runtime-candidate-691-1a5def1-r2.zip"
-        self.execution_name = "agentcollab-execution-candidate-691-1a5def1-r2.zip"
+        self.runtime_name = "agentcollab-runtime-v0.2.0-beta.1.zip"
+        self.execution_name = "agentcollab-execution-v0.2.0-beta.1.zip"
         self.release = {
-            "schema_version": 1, "product": "AgentCollab", "channel": "candidate",
-            "release_tag": "candidate-691-1a5def1-r2", "release_version": "candidate-691-1a5def1-r2",
+            "schema_version": 1, "product": "AgentCollab", "channel": "beta",
+            "release_tag": "candidate-v0.2.0-beta.1", "release_version": "v0.2.0-beta.1",
             "source": {"repository": "lkhkhk/AgentCollab", "commit": "1a5def1de57f8abccade2dcb4697fab26d1d45f5"},
             "service_branch": "main", "execution_contract_version": "1.0.0",
             "setup": {"package_path": "deploy/setup.py", "sha256": digest(self.setup_bytes)},
@@ -59,11 +59,11 @@ class BootstrapTests(unittest.TestCase):
         }
         self.release_raw = json.dumps(self.release, sort_keys=True).encode()
         self.manifest = {
-            "schema_version": 1, "channel": "candidate", "version": "candidate-691-1a5def1-r2",
+            "schema_version": 1, "channel": "beta", "version": "v0.2.0-beta.1",
             "public_repository": "lkhkhk/AgentCollab-Public",
             "source": {"repository": "lkhkhk/AgentCollab", "commit": "1a5def1de57f8abccade2dcb4697fab26d1d45f5", "service_branch": "main"},
             "distribution": {"repository": "lkhkhk/AgentCollab-Distribution", "visibility": "private",
-                "release_tag": "candidate-691-1a5def1-r2",
+                "release_tag": "candidate-v0.2.0-beta.1",
                 "release_manifest": {"name": "agentcollab-release-manifest.json", "sha256": digest(self.release_raw)},
                 "packages": self.release["packages"]},
             "setup": {"path": "deploy/setup.py", "sha256": digest(self.setup_bytes)},
@@ -135,6 +135,26 @@ class BootstrapTests(unittest.TestCase):
         wrong_release = dict(self.release, service_branch="work/untrusted")
         with self.assertRaises(bootstrap.BootstrapError):
             bootstrap.verify_bundle(self.manifest, json.dumps(wrong_release).encode(), self.runtime, self.execution)
+
+    def test_setup_digest_mismatch_and_incompatible_package_contract_fail_closed(self):
+        wrong_public = json.loads(json.dumps(self.manifest))
+        wrong_release = json.loads(json.dumps(self.release))
+        wrong_public["setup"]["sha256"] = "f" * 64
+        wrong_release["setup"]["sha256"] = "f" * 64
+        wrong_release_raw = json.dumps(wrong_release, sort_keys=True).encode()
+        wrong_public["distribution"]["release_manifest"]["sha256"] = digest(wrong_release_raw)
+        with self.assertRaises(bootstrap.BootstrapError):
+            bootstrap.verify_bundle(wrong_public, wrong_release_raw, self.runtime, self.execution)
+
+        incompatible = package("execution", contract="2.0.0")
+        pair_public = json.loads(json.dumps(self.manifest))
+        pair_release = json.loads(json.dumps(self.release))
+        pair_release["packages"]["execution"]["sha256"] = digest(incompatible)
+        pair_raw = json.dumps(pair_release, sort_keys=True).encode()
+        pair_public["distribution"]["packages"]["execution"]["sha256"] = digest(incompatible)
+        pair_public["distribution"]["release_manifest"]["sha256"] = digest(pair_raw)
+        with self.assertRaises(bootstrap.BootstrapError):
+            bootstrap.verify_bundle(pair_public, pair_raw, self.runtime, incompatible)
 
 
 if __name__ == "__main__":

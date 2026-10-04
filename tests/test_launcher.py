@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "candidate-691-1a5def1-r2"
+VERSION = "v0.2.0-beta.1"
 PUBLIC = "lkhkhk/AgentCollab-Public"
 
 
@@ -32,7 +32,7 @@ class LauncherTests(unittest.TestCase):
         self.bootstrap.write_text("import os; open(os.environ['MARKER'],'w').write('ran')\n", encoding="utf-8")
         self.manifest = self.root / "manifest.json"
         self.manifest.write_text(json.dumps({
-            "schema_version": 1, "channel": "candidate", "version": VERSION,
+            "schema_version": 1, "channel": "beta", "version": VERSION,
             "public_repository": PUBLIC,
             "bootstrap": {"name": "agentcollab-bootstrap.py",
                           "sha256": hashlib.sha256(self.bootstrap.read_bytes()).hexdigest()},

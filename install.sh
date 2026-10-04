@@ -1,10 +1,11 @@
 #!/bin/sh
 set -eu
 
-VERSION='candidate-691-1a5def1-r2'
+VERSION='v0.2.0-beta.1'
+PUBLIC_CANDIDATE_REF='candidate-v0.2.0-beta.1'
 PUBLIC_REPOSITORY='lkhkhk/AgentCollab-Public'
-MANIFEST_URL="https://raw.githubusercontent.com/${PUBLIC_REPOSITORY}/${VERSION}/installer-manifest.json"
-BOOTSTRAP_URL="https://github.com/${PUBLIC_REPOSITORY}/releases/download/${VERSION}/agentcollab-bootstrap.py"
+MANIFEST_URL="https://raw.githubusercontent.com/${PUBLIC_REPOSITORY}/${PUBLIC_CANDIDATE_REF}/installer-manifest.json"
+BOOTSTRAP_URL="https://github.com/${PUBLIC_REPOSITORY}/releases/download/${PUBLIC_CANDIDATE_REF}/agentcollab-bootstrap.py"
 
 fail() { printf '%s\n' "AgentCollab installer: $1" >&2; exit 1; }
 command -v curl >/dev/null 2>&1 || fail 'curl is required.'
@@ -32,20 +33,20 @@ try:
     value = json.loads(Path(path).read_text(encoding='utf-8'))
     artifact = value['bootstrap']
 except (OSError, KeyError, TypeError, json.JSONDecodeError):
-    raise SystemExit('candidate manifest is invalid')
+    raise SystemExit('beta manifest is invalid')
 if (not isinstance(value, dict) or value.get('schema_version') != 1
-        or value.get('channel') != 'candidate' or value.get('version') != version
+        or value.get('channel') != 'beta' or value.get('version') != version
         or value.get('public_repository') != repository
         or not isinstance(artifact, dict) or artifact.get('name') != 'agentcollab-bootstrap.py'):
-    raise SystemExit('candidate identity is invalid')
+    raise SystemExit('beta candidate identity is invalid')
 digest = artifact.get('sha256')
 if not isinstance(digest, str) or not re.fullmatch(r'[0-9a-f]{64}', digest):
     raise SystemExit('bootstrap SHA-256 is invalid')
 print(digest)
 PY
-) || fail 'candidate manifest validation failed.'
+) || fail 'beta candidate manifest validation failed.'
 
-curl -fsSL --proto '=https' --tlsv1.2 --output "$BOOTSTRAP_FILE" "$BOOTSTRAP_URL" || fail 'could not retrieve the candidate bootstrap.'
+curl -fsSL --proto '=https' --tlsv1.2 --output "$BOOTSTRAP_FILE" "$BOOTSTRAP_URL" || fail 'could not retrieve the beta candidate bootstrap.'
 if [ "$DIGEST_TOOL" = sha256sum ]; then DIGEST_LINE=$(sha256sum "$BOOTSTRAP_FILE")
 else DIGEST_LINE=$(shasum -a 256 "$BOOTSTRAP_FILE"); fi
 ACTUAL_SHA=${DIGEST_LINE%% *}

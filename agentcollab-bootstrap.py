@@ -18,7 +18,8 @@ from pathlib import Path, PurePosixPath
 PUBLIC_REPOSITORY = "lkhkhk/AgentCollab-Public"
 DISTRIBUTION_REPOSITORY = "lkhkhk/AgentCollab-Distribution"
 SOURCE_REPOSITORY = "lkhkhk/AgentCollab"
-CANDIDATE_VERSION = "candidate-691-1a5def1-r2"
+BETA_VERSION = "v0.2.0-beta.1"
+DISTRIBUTION_CANDIDATE_TAG = "candidate-v0.2.0-beta.1"
 SETUP_PATH = "deploy/setup.py"
 MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
 MAX_ARCHIVE_CONTENT_BYTES = 1024 * 1024 * 1024
@@ -55,10 +56,10 @@ def validate_public_manifest(manifest: object) -> dict:
     setup = manifest.get("setup")
     bootstrap = manifest.get("bootstrap")
     release_manifest = distribution.get("release_manifest") if isinstance(distribution, dict) else None
-    if (manifest.get("schema_version") != 1 or manifest.get("channel") != "candidate"
-            or manifest.get("version") != CANDIDATE_VERSION
+    if (manifest.get("schema_version") != 1 or manifest.get("channel") != "beta"
+            or manifest.get("version") != BETA_VERSION
             or manifest.get("public_repository") != PUBLIC_REPOSITORY):
-        raise BootstrapError("BLOCKED", "manifest", "Public candidate identity or channel is invalid.")
+        raise BootstrapError("BLOCKED", "manifest", "Public beta candidate identity or channel is invalid.")
     if (not isinstance(source, dict) or source.get("repository") != SOURCE_REPOSITORY
             or not re.fullmatch(r"[0-9a-f]{40}", str(source.get("commit", "")))
             or source.get("service_branch") != "main"):
@@ -66,7 +67,7 @@ def validate_public_manifest(manifest: object) -> dict:
     if (not isinstance(distribution, dict)
             or distribution.get("repository") != DISTRIBUTION_REPOSITORY
             or distribution.get("visibility") != "private"
-            or distribution.get("release_tag") != CANDIDATE_VERSION
+            or distribution.get("release_tag") != DISTRIBUTION_CANDIDATE_TAG
             or not isinstance(release_manifest, dict)
             or not _asset_name(release_manifest.get("name"))
             or not release_manifest["name"].startswith("agentcollab-release-manifest")
@@ -143,7 +144,7 @@ def verify_bundle(public_manifest: dict, release_manifest_raw: bytes,
     expected_source = public_manifest["source"]
     release_setup = release.get("setup") if isinstance(release, dict) else None
     if (not isinstance(release, dict) or release.get("schema_version") != 1
-            or release.get("product") != "AgentCollab" or release.get("channel") != "candidate"
+            or release.get("product") != "AgentCollab" or release.get("channel") != "beta"
             or release.get("release_tag") != public_manifest["distribution"]["release_tag"]
             or release.get("release_version") != public_manifest["version"]
             or release.get("source") != {"repository": expected_source["repository"], "commit": expected_source["commit"]}
@@ -152,7 +153,7 @@ def verify_bundle(public_manifest: dict, release_manifest_raw: bytes,
             or release_setup.get("package_path") != public_manifest["setup"]["path"]
             or release_setup.get("sha256") != public_manifest["setup"]["sha256"]
             or release.get("packages") != public_manifest["distribution"]["packages"]):
-        raise BootstrapError("BLOCKED", "release-verification", "Private release provenance differs from the Public candidate manifest.")
+        raise BootstrapError("BLOCKED", "release-verification", "Private release provenance differs from the Public beta manifest.")
     runtime, setup_bytes = _read_zip(runtime_raw, "runtime", public_manifest)
     execution, _ = _read_zip(execution_raw, "execution", public_manifest)
     pair_fields = ("release_version", "execution_contract_version", "source", "service_branch")
