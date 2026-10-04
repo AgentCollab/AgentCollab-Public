@@ -1,5 +1,5 @@
-# Notice
+# 배포 경계
 
-This public entry repository contains its launcher, documentation, tests, and one distributable installer artifact. The installer artifact is an unmodified copy of `lkhkhk/AgentCollab@3980ee450f373f36cc516ae0b9c49790083973c0:deploy/guided_installer.py`, identified in `installer-manifest.json`.
+이 Public candidate에는 설치 진입점과 bootstrap만 포함됩니다. 전체 소스, Runtime ZIP, Execution ZIP은 포함하지 않습니다. 패키지는 private `lkhkhk/AgentCollab-Distribution` candidate release에서 인증된 GitHub CLI로 받습니다. 공개 manifest는 source commit, main 서비스 브랜치, release manifest digest, package SHA-256, setup digest를 고정합니다.
 
-This notice does not relicense the private AgentCollab repository or grant permission to redistribute its source/history. The artifact is published solely as the official installer entry for AgentCollab. Contact the repository owner for other use or redistribution questions.
+이 후보는 stable release 또는 production 배포가 아닙니다.

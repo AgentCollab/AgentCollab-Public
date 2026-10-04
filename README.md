@@ -1,21 +1,14 @@
-# AgentCollab Public Entry
+# AgentCollab 개인 사용자 설치 후보
 
-AgentCollab helps teams organize AI-assisted work from request and planning through implementation, review, validation, and approval. This repository is the public starting point for the official private AgentCollab installer; it is not a setup engine.
+이 공개 후보는 설치 문서와 검증된 bootstrap만 제공합니다. Runtime/Execution 패키지는 private `lkhkhk/AgentCollab-Distribution` 저장소에서 인증된 GitHub CLI를 통해 받습니다.
 
-## Quick Start
+## 시작
 
 ```sh
-git clone https://github.com/lkhkhk/AgentCollab-Public.git
-cd AgentCollab-Public
-./install.sh
+gh auth login
+/path/to/install.sh plan
 ```
 
-The launcher downloads the versioned installer, validates its manifest and SHA-256, and starts it only after verification. The installer then guides GitHub authentication, prerequisites, source acquisition, configuration, and canonical setup as needed. You do not need a private AgentCollab checkout to start.
+GitHub 계정에 private Distribution 접근 권한이 있어야 합니다. 권한이 없으면 소유자에게 접근을 요청한 뒤 다시 실행하세요. 토큰을 명령행에 붙여 넣거나 저장할 필요가 없습니다. 설치 기본 위치는 실행한 현재 디렉터리의 `./agentcollab`이며 `--installation-root <path>`로 바꿀 수 있습니다.
 
-## Provenance
-
-`installer-manifest.json` is the authoritative distribution metadata for the published installer. Its `private_source.repository`, `private_source.commit`, and `private_source.path` identify the exact private source revision used to produce the public installer artifact; `install.sh` pins the same version/source identity and refuses a mismatch.
-
-That source commit is **artifact provenance**, not an assertion that it is the current private AgentCollab Production `main`. Production deployment and installer-artifact publication have separate release evidence. To determine the exact relationship for a published version, read the versioned manifest rather than assuming the latest private branch or `main`.
-
-See [INSTALL.md](INSTALL.md) for starting requirements and result states.
+PLAN은 패키지 provenance와 SHA-256을 검증한 후 setup engine에 연결됩니다. 계획을 검토한 뒤에만 APPLY를 실행하고, 완료 후 VERIFY를 실행하세요. 이 브랜치는 candidate이며 stable 설치 경로를 변경하지 않습니다.
