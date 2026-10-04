@@ -11,10 +11,10 @@
   "distribution": {
     "repository": "lkhkhk/AgentCollab-Distribution",
     "visibility": "private",
-    "release_tag": "candidate-v0.2.0-beta.1",
+    "release_tag": "v0.2.0-beta.1",
     "release_manifest": {
-      "name": "agentcollab-release-manifest-v0.2.0-beta.1.json",
-      "sha256": "712b7695f341c6bdb881ffb7c31ce12d8c61292fbe59f413fca973f4c0d68cea"
+      "name": "agentcollab-release-manifest-v0.2.0-beta.1-final.json",
+      "sha256": "bdc8d3685da59156f1c7376065d33a005a0f9cf0051b078783bad01873db6fcb"
     },
     "packages": {
       "execution": {
@@ -33,6 +33,6 @@
   },
   "bootstrap": {
     "name": "agentcollab-bootstrap.py",
-    "sha256": "d27b36a989689a69ad81cdf68d6fab64d45ea86edac4688ac5f333ce08fde375"
+    "sha256": "cfb4923ae96def1e7415ff998fb935eb11c28cb532132571f0f8afd3b557d26d"
   }
 }

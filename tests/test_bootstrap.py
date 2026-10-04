@@ -48,7 +48,7 @@ class BootstrapTests(unittest.TestCase):
         self.execution_name = "agentcollab-execution-v0.2.0-beta.1.zip"
         self.release = {
             "schema_version": 1, "product": "AgentCollab", "channel": "beta",
-            "release_tag": "candidate-v0.2.0-beta.1", "release_version": "v0.2.0-beta.1",
+            "release_tag": "v0.2.0-beta.1", "release_version": "v0.2.0-beta.1",
             "source": {"repository": "lkhkhk/AgentCollab", "commit": "1a5def1de57f8abccade2dcb4697fab26d1d45f5"},
             "service_branch": "main", "execution_contract_version": "1.0.0",
             "setup": {"package_path": "deploy/setup.py", "sha256": digest(self.setup_bytes)},
@@ -63,7 +63,7 @@ class BootstrapTests(unittest.TestCase):
             "public_repository": "lkhkhk/AgentCollab-Public",
             "source": {"repository": "lkhkhk/AgentCollab", "commit": "1a5def1de57f8abccade2dcb4697fab26d1d45f5", "service_branch": "main"},
             "distribution": {"repository": "lkhkhk/AgentCollab-Distribution", "visibility": "private",
-                "release_tag": "candidate-v0.2.0-beta.1",
+                "release_tag": "v0.2.0-beta.1",
                 "release_manifest": {"name": "agentcollab-release-manifest.json", "sha256": digest(self.release_raw)},
                 "packages": self.release["packages"]},
             "setup": {"path": "deploy/setup.py", "sha256": digest(self.setup_bytes)},

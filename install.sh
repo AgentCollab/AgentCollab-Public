@@ -2,10 +2,9 @@
 set -eu
 
 VERSION='v0.2.0-beta.1'
-PUBLIC_CANDIDATE_REF='candidate-v0.2.0-beta.1'
 PUBLIC_REPOSITORY='lkhkhk/AgentCollab-Public'
-MANIFEST_URL="https://raw.githubusercontent.com/${PUBLIC_REPOSITORY}/${PUBLIC_CANDIDATE_REF}/installer-manifest.json"
-BOOTSTRAP_URL="https://github.com/${PUBLIC_REPOSITORY}/releases/download/${PUBLIC_CANDIDATE_REF}/agentcollab-bootstrap.py"
+MANIFEST_URL="https://raw.githubusercontent.com/${PUBLIC_REPOSITORY}/${VERSION}/installer-manifest.json"
+BOOTSTRAP_URL="https://github.com/${PUBLIC_REPOSITORY}/releases/download/${VERSION}/agentcollab-bootstrap.py"
 
 fail() { printf '%s\n' "AgentCollab installer: $1" >&2; exit 1; }
 command -v curl >/dev/null 2>&1 || fail 'curl is required.'
@@ -24,7 +23,7 @@ trap 'exit 143' TERM
 
 MANIFEST_FILE="$DOWNLOAD_DIR/installer-manifest.json"
 BOOTSTRAP_FILE="$DOWNLOAD_DIR/agentcollab-bootstrap.py"
-curl -fsSL --proto '=https' --tlsv1.2 --output "$MANIFEST_FILE" "$MANIFEST_URL" || fail 'could not retrieve the candidate manifest.'
+curl -fsSL --proto '=https' --tlsv1.2 --output "$MANIFEST_FILE" "$MANIFEST_URL" || fail 'could not retrieve the beta manifest.'
 EXPECTED_SHA=$(python3 - "$MANIFEST_FILE" "$VERSION" "$PUBLIC_REPOSITORY" <<'PY'
 import json, re, sys
 from pathlib import Path
@@ -46,7 +45,7 @@ print(digest)
 PY
 ) || fail 'beta candidate manifest validation failed.'
 
-curl -fsSL --proto '=https' --tlsv1.2 --output "$BOOTSTRAP_FILE" "$BOOTSTRAP_URL" || fail 'could not retrieve the beta candidate bootstrap.'
+curl -fsSL --proto '=https' --tlsv1.2 --output "$BOOTSTRAP_FILE" "$BOOTSTRAP_URL" || fail 'could not retrieve the beta bootstrap.'
 if [ "$DIGEST_TOOL" = sha256sum ]; then DIGEST_LINE=$(sha256sum "$BOOTSTRAP_FILE")
 else DIGEST_LINE=$(shasum -a 256 "$BOOTSTRAP_FILE"); fi
 ACTUAL_SHA=${DIGEST_LINE%% *}

@@ -19,7 +19,7 @@ PUBLIC_REPOSITORY = "lkhkhk/AgentCollab-Public"
 DISTRIBUTION_REPOSITORY = "lkhkhk/AgentCollab-Distribution"
 SOURCE_REPOSITORY = "lkhkhk/AgentCollab"
 BETA_VERSION = "v0.2.0-beta.1"
-DISTRIBUTION_CANDIDATE_TAG = "candidate-v0.2.0-beta.1"
+DISTRIBUTION_BETA_TAG = "v0.2.0-beta.1"
 SETUP_PATH = "deploy/setup.py"
 MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
 MAX_ARCHIVE_CONTENT_BYTES = 1024 * 1024 * 1024
@@ -67,7 +67,7 @@ def validate_public_manifest(manifest: object) -> dict:
     if (not isinstance(distribution, dict)
             or distribution.get("repository") != DISTRIBUTION_REPOSITORY
             or distribution.get("visibility") != "private"
-            or distribution.get("release_tag") != DISTRIBUTION_CANDIDATE_TAG
+            or distribution.get("release_tag") != DISTRIBUTION_BETA_TAG
             or not isinstance(release_manifest, dict)
             or not _asset_name(release_manifest.get("name"))
             or not release_manifest["name"].startswith("agentcollab-release-manifest")

@@ -1,4 +1,4 @@
-# 설치 안내 (v0.2.0-beta.1 candidate)
+# 설치 안내 (v0.2.0-beta.1 Beta)
 
 1. GitHub CLI를 설치하고 `gh auth login`으로 인증합니다.
 2. 계정이 private `lkhkhk/AgentCollab-Distribution` 저장소에 접근할 수 있는지 확인합니다. 접근 권한이 없으면 저장소 소유자에게 요청하세요.
