@@ -11,7 +11,7 @@
    ./install.sh plan --version VERSION
    ```
 
-   No selector uses `channels/default.json`. A channel selector uses that channel's pointer. `--version` reads the exact immutable version record and bypasses channel pointers. Combining `--version` and `--channel` is blocked.
+   No selector uses `channels/default.json`. A channel selector uses that channel's pointer and accepts only `kind: release` backed by Source `main`. `--version` reads the exact immutable version record and bypasses channel pointers; this can select a `kind: candidate` for DUT. Combining `--version` and `--channel` is blocked.
 
 5. Apply only the reviewed plan, passing its `plan_sha256`:
 

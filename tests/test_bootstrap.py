@@ -26,12 +26,13 @@ def json_bytes(value: dict) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
-def package(kind: str, version: str, source_commit: str, setup: bytes = b"", contract: str = "1.0.0") -> bytes:
+def package(kind: str, version: str, source_commit: str, setup: bytes = b"", contract: str = "1.0.0",
+            service_branch: str = "main") -> bytes:
     managed = {"deploy/setup.py": setup} if kind == "runtime" else {"execution/task.json": b"{}"}
     manifest = {
         "product": "AgentCollab", "release_version": version,
         "source": {"repository": "lkhkhk/AgentCollab", "commit": source_commit},
-        "service_branch": "main", "execution_contract_version": contract,
+        "service_branch": service_branch, "execution_contract_version": contract,
         "managed_paths": list(managed), "files_sha256": {name: digest(data) for name, data in managed.items()},
     }
     result = io.BytesIO()
@@ -68,7 +69,7 @@ class BootstrapTests(unittest.TestCase):
         self.release_raw = json_bytes(self.release)
         self.record = {
             "schema_version": 1, "product": "AgentCollab", "version": self.version,
-            "release_tag": self.version,
+            "kind": "release", "release_tag": self.version,
             "release_manifest": {"name": f"agentcollab-release-manifest-{self.version}.json",
                                  "sha256": digest(self.release_raw)},
         }
@@ -100,6 +101,29 @@ class BootstrapTests(unittest.TestCase):
         self.capture = {}
         self.catalog_failures = set()
         self.release_failures = set()
+
+    def configure_kind_and_branch(self, kind="release", service_branch="main"):
+        self.release["service_branch"] = service_branch
+        self.runtime = package("runtime", self.version, self.source_commit, self.setup_bytes,
+                               service_branch=service_branch)
+        self.execution = package("execution", self.version, self.source_commit,
+                                 service_branch=service_branch)
+        self.release["packages"]["runtime"]["sha256"] = digest(self.runtime)
+        self.release["packages"]["execution"]["sha256"] = digest(self.execution)
+        self.release_raw = json_bytes(self.release)
+        self.record["kind"] = kind
+        self.record["release_manifest"]["sha256"] = digest(self.release_raw)
+        self.record_raw = json_bytes(self.record)
+        self.pointer["version_record"]["sha256"] = digest(self.record_raw)
+        self.beta_pointer["version_record"]["sha256"] = digest(self.record_raw)
+        self.stable_pointer["version_record"]["sha256"] = digest(self.record_raw)
+        self.catalog[f"versions/{self.version}.json"] = self.record_raw
+        self.catalog["channels/default.json"] = json_bytes(self.pointer)
+        self.catalog["channels/beta.json"] = json_bytes(self.beta_pointer)
+        self.catalog["channels/stable.json"] = json_bytes(self.stable_pointer)
+        self.assets[self.record["release_manifest"]["name"]] = self.release_raw
+        self.assets[self.runtime_name] = self.runtime
+        self.assets[self.execution_name] = self.execution
 
     def command(self, argv, *, timeout=120, **_kwargs):
         self.command_calls.append(list(argv))
@@ -186,6 +210,43 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual([f"versions/{self.version}.json"], paths)
         self.assertEqual(self.version, json.loads(_stderr)["requested_selector"]["value"])
 
+    def test_exact_candidate_with_safe_work_branch_is_accepted(self):
+        self.configure_kind_and_branch("candidate", "work/694-auto-web-port")
+        result, stderr = self.run_bootstrap(["--version", self.version])
+        self.assertEqual(0, result)
+        self.assertEqual("work/694-auto-web-port", json.loads(stderr)["source"]["service_branch"])
+
+    def test_unsafe_candidate_service_branches_are_blocked(self):
+        for branch in ("work/../bad", "work/@{bad}", "work//topic", "work/.hidden", "work/topic.lock"):
+            with self.subTest(branch=branch):
+                self.configure_kind_and_branch("candidate", branch)
+                self.capture.clear()
+                result, stderr = self.run_bootstrap(["--version", self.version])
+                self.assertEqual(2, result)
+                self.assertEqual("release-verification", json.loads(stderr)["phase"])
+                self.assertNotIn("argv", self.capture, "invalid provenance must not execute setup")
+
+    def test_channel_candidate_kind_is_blocked_before_release_download(self):
+        self.configure_kind_and_branch("candidate", "work/694-auto-web-port")
+        result, stderr = self.run_bootstrap()
+        self.assertEqual(2, result)
+        self.assertEqual("version-record", json.loads(stderr)["phase"])
+        self.assertEqual([], self.downloaded)
+        self.assertNotIn("argv", self.capture)
+
+    def test_channel_release_with_non_main_branch_is_blocked_before_setup(self):
+        self.configure_kind_and_branch("release", "work/694-auto-web-port")
+        for selector in ([], ["--channel", "beta"]):
+            with self.subTest(selector=selector):
+                self.capture.clear()
+                self.downloaded.clear()
+                result, stderr = self.run_bootstrap(selector)
+                self.assertEqual(2, result)
+                self.assertEqual("release-verification", json.loads(stderr)["phase"])
+                self.assertEqual(1, len(self.downloaded),
+                                 "packages must not download after invalid channel provenance")
+                self.assertNotIn("argv", self.capture)
+
     def test_version_and_channel_conflict_before_any_remote_access(self):
         result, stderr = self.run_bootstrap(["--version", self.version, "--channel", "beta"])
         self.assertEqual(2, result)
@@ -230,6 +291,20 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(["channels/default.json", f"versions/{self.version}.json"],
                          [call[2].split("/contents/", 1)[1] for call in self.command_calls
                           if call[:2] == ["gh", "api"] and "/contents/" in call[2]])
+
+    def test_catalog_schemas_reject_duplicated_package_hashes(self):
+        pointer_with_packages = dict(self.pointer, packages=self.release["packages"])
+        self.catalog["channels/default.json"] = json_bytes(pointer_with_packages)
+        result, stderr = self.run_bootstrap()
+        self.assertEqual(2, result)
+        self.assertEqual("channel-pointer", json.loads(stderr)["phase"])
+
+        self.catalog["channels/default.json"] = json_bytes(self.pointer)
+        record_with_packages = dict(self.record, packages=self.release["packages"])
+        self.catalog[f"versions/{self.version}.json"] = json_bytes(record_with_packages)
+        result, stderr = self.run_bootstrap(["--version", self.version])
+        self.assertEqual(2, result)
+        self.assertEqual("version-record", json.loads(stderr)["phase"])
 
     def test_malformed_version_record_and_nonexistent_exact_version_block(self):
         self.catalog[f"versions/{self.version}.json"] = b"{}"

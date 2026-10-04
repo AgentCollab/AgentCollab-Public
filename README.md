@@ -22,7 +22,7 @@ The GitHub identity must have read access to the private Distribution repository
 ./install.sh plan --version VERSION     # exact immutable version
 ```
 
-`--version` and `--channel` cannot be combined. Exact versions bypass channel pointers. A resolved version is used for all subsequent manifest/package reads; there is no fallback to another version.
+`--version` and `--channel` cannot be combined. Exact versions bypass channel pointers and may select an immutable candidate for DUT. Candidates cannot be selected through default/beta/stable pointers; pointer-selected versions must be `kind: release` and use Source `main`. A resolved version is used for all subsequent manifest/package reads; there is no fallback to another version.
 
 The bootstrap reports the requested selector, resolved version, Distribution release identity, and exact Source SHA to standard error. It verifies the channel pointer's version-record digest, release-manifest digest, Runtime/Execution hashes and provenance before invoking the setup engine.
 

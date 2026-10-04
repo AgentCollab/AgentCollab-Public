@@ -4,6 +4,6 @@
   "public_repository": "AgentCollab/AgentCollab-Public",
   "bootstrap": {
     "name": "agentcollab-bootstrap.py",
-    "sha256": "47124e67bfa21c096326447c71e0cffe1b7d9416588e4a8fcac4f0df79eec20e"
+    "sha256": "69e78679cb5902d9e12a80bede06e28763310ed86528bd9110d5ebb50229fc58"
   }
 }

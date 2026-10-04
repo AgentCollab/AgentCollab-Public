@@ -21,6 +21,7 @@ DISTRIBUTION_REPOSITORY = "AgentCollab/AgentCollab-Distribution"
 SOURCE_REPOSITORY = "lkhkhk/AgentCollab"
 INSTALLER_PROTOCOL = "distribution-catalog-v1"
 VERSION_PATTERN = re.compile(r"[0-9A-Za-z][0-9A-Za-z._+-]{0,63}")
+SERVICE_BRANCH_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*[A-Za-z0-9_]")
 CHANNELS = {"default", "beta", "stable"}
 SETUP_PATH = "deploy/setup.py"
 MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
@@ -67,11 +68,21 @@ def _valid_version(value: object) -> bool:
     return isinstance(value, str) and VERSION_PATTERN.fullmatch(value) is not None
 
 
+def _valid_service_branch(value: object) -> bool:
+    return (isinstance(value, str) and SERVICE_BRANCH_PATTERN.fullmatch(value) is not None
+            and ".." not in value and "@{" not in value and "//" not in value
+            and all(part and not part.startswith(".") and not part.endswith(".lock")
+                    for part in value.split("/")))
+
+
 def _validate_version_record(record: object, version: str) -> dict:
     release_manifest = record.get("release_manifest") if isinstance(record, dict) else None
     if (not isinstance(record, dict) or record.get("schema_version") != 1
+            or set(record) != {"schema_version", "product", "version", "kind", "release_tag", "release_manifest"}
             or record.get("product") != "AgentCollab" or record.get("version") != version
+            or not isinstance(record.get("kind"), str) or record.get("kind") not in {"candidate", "release"}
             or record.get("release_tag") != version or not isinstance(release_manifest, dict)
+            or set(release_manifest) != {"name", "sha256"}
             or not _asset_name(release_manifest.get("name"))
             or not release_manifest["name"].startswith("agentcollab-release-manifest")
             or not release_manifest["name"].endswith(".json")
@@ -85,8 +96,10 @@ def _validate_channel_pointer(pointer: object, channel: str) -> tuple[str, dict]
     record_ref = pointer.get("version_record") if isinstance(pointer, dict) else None
     expected_path = f"versions/{version}.json" if _valid_version(version) else None
     if (not isinstance(pointer, dict) or pointer.get("schema_version") != 1
+            or set(pointer) != {"schema_version", "product", "channel", "version", "version_record"}
             or pointer.get("product") != "AgentCollab" or pointer.get("channel") != channel
             or expected_path is None or not isinstance(record_ref, dict)
+            or set(record_ref) != {"path", "sha256"}
             or record_ref.get("path") != expected_path or not _digest(record_ref.get("sha256"))):
         raise BootstrapError("BLOCKED", "channel-pointer", "Distribution channel pointer is invalid or mismatched.")
     return version, record_ref
@@ -137,7 +150,11 @@ def resolve_version(*, requested_version: str | None, requested_channel: str | N
     record, record_raw = _read_catalog_json(record_ref["path"], run)
     if _sha256(record_raw) != record_ref["sha256"]:
         raise BootstrapError("BLOCKED", "version-record", "Distribution version record SHA-256 mismatch.")
-    return version, _validate_version_record(record, version), {
+    record = _validate_version_record(record, version)
+    if record["kind"] != "release":
+        raise BootstrapError("BLOCKED", "version-record",
+                             "Channel pointers may reference only Distribution kind=release versions.")
+    return version, record, {
         "kind": "default" if requested_channel is None else "channel",
         "value": channel,
     }, _sha256(record_raw)
@@ -187,7 +204,8 @@ def _read_zip(raw: bytes, kind: str, release: dict) -> tuple[dict, bytes]:
     return package_manifest, setup_bytes
 
 
-def validate_release_manifest(version_record: dict, release_manifest_raw: bytes) -> dict:
+def validate_release_manifest(version_record: dict, release_manifest_raw: bytes,
+                              requested_selector: dict) -> dict:
     if _sha256(release_manifest_raw) != version_record["release_manifest"]["sha256"]:
         raise BootstrapError("BLOCKED", "release-verification", "Private release manifest SHA-256 mismatch.")
     try:
@@ -204,12 +222,23 @@ def validate_release_manifest(version_record: dict, release_manifest_raw: bytes)
             or release.get("release_tag") != version or release.get("release_version") != version
             or not isinstance(source, dict) or source.get("repository") != SOURCE_REPOSITORY
             or not re.fullmatch(r"[0-9a-f]{40}", str(source.get("commit", "")))
-            or release.get("service_branch") != "main"
+            or not isinstance(release.get("service_branch"), str)
             or not isinstance(setup, dict) or setup.get("package_path") != SETUP_PATH
             or not _digest(setup.get("sha256")) or not isinstance(release.get("execution_contract_version"), str)
             or not release["execution_contract_version"]
             or not isinstance(packages, dict)):
         raise BootstrapError("BLOCKED", "release-verification", "Private release provenance or identity is invalid.")
+    service_branch = release["service_branch"]
+    if not _valid_service_branch(service_branch):
+        raise BootstrapError("BLOCKED", "release-verification", "Private release service branch is invalid.")
+    if version_record["kind"] == "release" and service_branch != "main":
+        raise BootstrapError("BLOCKED", "release-verification", "Distribution kind=release requires service_branch=main.")
+    if version_record["kind"] == "candidate" and service_branch != "main" and not service_branch.startswith("work/"):
+        raise BootstrapError("BLOCKED", "release-verification",
+                             "Distribution kind=candidate requires service_branch=main or a work/* branch.")
+    if requested_selector["kind"] in {"default", "channel"} and service_branch != "main":
+        raise BootstrapError("BLOCKED", "release-verification",
+                             "Channel/default Distribution selection requires service_branch=main.")
     for kind in ("runtime", "execution"):
         item = packages.get(kind)
         if (not isinstance(item, dict) or not _asset_name(item.get("filename"))
@@ -357,7 +386,7 @@ def run_bootstrap(argv=None, *, command_fn=_run, which=shutil.which,
         with tempfile.TemporaryDirectory(prefix="agentcollab-private-packages-") as temporary:
             download_dir = Path(temporary)
             release_raw = _download_release_manifest(version_record, download_dir, command_fn)
-            release = validate_release_manifest(version_record, release_raw)
+            release = validate_release_manifest(version_record, release_raw, requested_selector)
             runtime_raw, execution_raw = _download_packages(release, download_dir, command_fn)
             _release, _runtime_manifest, _setup_bytes = verify_bundle(release, runtime_raw, execution_raw)
             runtime_package = download_dir / release["packages"]["runtime"]["filename"]
@@ -395,12 +424,13 @@ def run_bootstrap(argv=None, *, command_fn=_run, which=shutil.which,
                 "resolved_version": version,
                 "distribution": {
                     "repository": DISTRIBUTION_REPOSITORY,
+                    "version_kind": version_record["kind"],
                     "release_tag": version_record["release_tag"],
                     "version_record_path": f"versions/{version}.json",
                     "version_record_sha256": version_record_sha256,
                     "release_manifest": version_record["release_manifest"],
                 },
-                "source": release["source"],
+                "source": {**release["source"], "service_branch": release["service_branch"]},
             }, sort_keys=True), file=sys.stderr)
             result = runner(setup_args, check=False, cwd=runtime_root, env=environment)
             return int(getattr(result, "returncode", 2))
