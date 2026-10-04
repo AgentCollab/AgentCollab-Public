@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "candidate-691-1a5def1"
+VERSION = "candidate-691-1a5def1-r2"
 PUBLIC = "lkhkhk/AgentCollab-Public"
 
 

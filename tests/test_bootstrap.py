@@ -23,7 +23,7 @@ def digest(data: bytes) -> str:
 def package(kind: str, setup: bytes = b"") -> bytes:
     managed = {"deploy/setup.py": setup} if kind == "runtime" else {"execution/task.json": b"{}"}
     manifest = {
-        "product": "AgentCollab", "release_version": "candidate-691-1a5def1",
+        "product": "AgentCollab", "release_version": "candidate-691-1a5def1-r2",
         "source": {"repository": "lkhkhk/AgentCollab", "commit": "1a5def1de57f8abccade2dcb4697fab26d1d45f5"},
         "service_branch": "main", "execution_contract_version": "1.0.0",
         "managed_paths": list(managed), "files_sha256": {name: digest(data) for name, data in managed.items()},
@@ -44,11 +44,11 @@ class BootstrapTests(unittest.TestCase):
         self.setup_bytes = b"# verified setup fixture\n"
         self.runtime = package("runtime", self.setup_bytes)
         self.execution = package("execution")
-        self.runtime_name = "agentcollab-runtime-candidate-691-1a5def1.zip"
-        self.execution_name = "agentcollab-execution-candidate-691-1a5def1.zip"
+        self.runtime_name = "agentcollab-runtime-candidate-691-1a5def1-r2.zip"
+        self.execution_name = "agentcollab-execution-candidate-691-1a5def1-r2.zip"
         self.release = {
             "schema_version": 1, "product": "AgentCollab", "channel": "candidate",
-            "release_tag": "candidate-691-1a5def1", "release_version": "candidate-691-1a5def1",
+            "release_tag": "candidate-691-1a5def1-r2", "release_version": "candidate-691-1a5def1-r2",
             "source": {"repository": "lkhkhk/AgentCollab", "commit": "1a5def1de57f8abccade2dcb4697fab26d1d45f5"},
             "service_branch": "main", "execution_contract_version": "1.0.0",
             "setup": {"package_path": "deploy/setup.py", "sha256": digest(self.setup_bytes)},
@@ -59,11 +59,11 @@ class BootstrapTests(unittest.TestCase):
         }
         self.release_raw = json.dumps(self.release, sort_keys=True).encode()
         self.manifest = {
-            "schema_version": 1, "channel": "candidate", "version": "candidate-691-1a5def1",
+            "schema_version": 1, "channel": "candidate", "version": "candidate-691-1a5def1-r2",
             "public_repository": "lkhkhk/AgentCollab-Public",
             "source": {"repository": "lkhkhk/AgentCollab", "commit": "1a5def1de57f8abccade2dcb4697fab26d1d45f5", "service_branch": "main"},
             "distribution": {"repository": "lkhkhk/AgentCollab-Distribution", "visibility": "private",
-                "release_tag": "candidate-691-1a5def1",
+                "release_tag": "candidate-691-1a5def1-r2",
                 "release_manifest": {"name": "agentcollab-release-manifest.json", "sha256": digest(self.release_raw)},
                 "packages": self.release["packages"]},
             "setup": {"path": "deploy/setup.py", "sha256": digest(self.setup_bytes)},

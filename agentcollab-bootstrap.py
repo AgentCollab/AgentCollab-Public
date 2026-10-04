@@ -18,7 +18,7 @@ from pathlib import Path, PurePosixPath
 PUBLIC_REPOSITORY = "lkhkhk/AgentCollab-Public"
 DISTRIBUTION_REPOSITORY = "lkhkhk/AgentCollab-Distribution"
 SOURCE_REPOSITORY = "lkhkhk/AgentCollab"
-CANDIDATE_VERSION = "candidate-691-1a5def1"
+CANDIDATE_VERSION = "candidate-691-1a5def1-r2"
 SETUP_PATH = "deploy/setup.py"
 MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
 MAX_ARCHIVE_CONTENT_BYTES = 1024 * 1024 * 1024
@@ -68,7 +68,9 @@ def validate_public_manifest(manifest: object) -> dict:
             or distribution.get("visibility") != "private"
             or distribution.get("release_tag") != CANDIDATE_VERSION
             or not isinstance(release_manifest, dict)
-            or release_manifest.get("name") != "agentcollab-release-manifest.json"
+            or not _asset_name(release_manifest.get("name"))
+            or not release_manifest["name"].startswith("agentcollab-release-manifest")
+            or not release_manifest["name"].endswith(".json")
             or not _digest(release_manifest.get("sha256"))):
         raise BootstrapError("BLOCKED", "manifest", "Private Distribution release identity is invalid.")
     if not isinstance(packages, dict) or not isinstance(setup, dict) or setup.get("path") != SETUP_PATH:
@@ -161,6 +163,35 @@ def verify_bundle(public_manifest: dict, release_manifest_raw: bytes,
     return release, runtime, setup_bytes
 
 
+def materialize_verified_runtime(raw: bytes, destination: Path) -> Path:
+    """Materialize the already digest-verified Runtime without honoring links."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+            for info in archive.infolist():
+                relative = PurePosixPath(info.filename)
+                if relative.is_absolute() or ".." in relative.parts or "\\" in info.filename:
+                    raise ValueError("unsafe runtime path")
+                mode = (info.external_attr >> 16) & 0o170000
+                if mode not in (0, 0o100000, 0o040000):
+                    raise ValueError("runtime archive contains a non-regular entry")
+                target = destination.joinpath(*relative.parts)
+                if info.is_dir():
+                    target.mkdir(parents=True, exist_ok=True)
+                    continue
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(archive.read(info))
+                permissions = (info.external_attr >> 16) & 0o777
+                if permissions:
+                    target.chmod(permissions)
+    except (OSError, KeyError, ValueError, zipfile.BadZipFile) as error:
+        raise BootstrapError("BLOCKED", "package-verification",
+                             "Verified Runtime package could not be materialized safely.") from error
+    setup_path = destination / SETUP_PATH
+    if not setup_path.is_file():
+        raise BootstrapError("BLOCKED", "package-verification", "Verified Runtime is missing deploy/setup.py.")
+    return setup_path
+
+
 def _run(args: list[str], *, timeout: int = 120):
     try:
         return subprocess.run(args, text=True, capture_output=True, timeout=timeout, check=False)
@@ -239,9 +270,8 @@ def run_bootstrap(argv=None, *, command_fn=_run, which=shutil.which,
             execution_package = download_dir / public_manifest["distribution"]["packages"]["execution"]["filename"]
             runtime_package.write_bytes(runtime_raw)
             execution_package.write_bytes(execution_raw)
-            setup_path = download_dir / "verified-runtime" / SETUP_PATH
-            setup_path.parent.mkdir(parents=True, exist_ok=True)
-            setup_path.write_bytes(_setup_bytes)
+            runtime_root = download_dir / "verified-runtime"
+            setup_path = materialize_verified_runtime(runtime_raw, runtime_root)
             setup_args = [sys.executable, str(setup_path), args.phase,
                           "--installation-root", str(installation_root),
                           "--runtime-package", str(runtime_package),
@@ -266,7 +296,10 @@ def run_bootstrap(argv=None, *, command_fn=_run, which=shutil.which,
             elif args.approved_plan_sha256:
                 parser.error("--approved-plan-sha256 is only valid with APPLY")
             runner = setup_command_fn or subprocess.run
-            result = runner(setup_args, check=False)
+            environment = dict(os.environ)
+            prior_pythonpath = environment.get("PYTHONPATH")
+            environment["PYTHONPATH"] = str(runtime_root) + (os.pathsep + prior_pythonpath if prior_pythonpath else "")
+            result = runner(setup_args, check=False, cwd=runtime_root, env=environment)
             return int(getattr(result, "returncode", 2))
     except BootstrapError as error:
         payload = {"status": error.status, "phase": error.phase, "reason": error.reason}

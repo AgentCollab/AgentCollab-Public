@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "channel": "candidate",
-  "version": "candidate-691-1a5def1",
+  "version": "candidate-691-1a5def1-r2",
   "public_repository": "lkhkhk/AgentCollab-Public",
   "source": {
     "repository": "lkhkhk/AgentCollab",
@@ -11,19 +11,19 @@
   "distribution": {
     "repository": "lkhkhk/AgentCollab-Distribution",
     "visibility": "private",
-    "release_tag": "candidate-691-1a5def1",
+    "release_tag": "candidate-691-1a5def1-r2",
     "release_manifest": {
-      "name": "agentcollab-release-manifest.json",
-      "sha256": "79fd613a7b319c3b5336e8f5e06544f2ad40914a441bacadff31d0be6b3261a8"
+      "name": "agentcollab-release-manifest-r2.json",
+      "sha256": "05c0a3e0c8a0c37fc7c19a7da376873011b7bf35a6107791adb0ef26966ebe55"
     },
     "packages": {
-      "runtime": {
-        "filename": "agentcollab-runtime-candidate-691-1a5def1.zip",
-        "sha256": "9476d7c774fbcff9583442b318b399a56cdf93b0f6c3830b4998d043f58f35fc"
-      },
       "execution": {
-        "filename": "agentcollab-execution-candidate-691-1a5def1.zip",
-        "sha256": "94427ab258f85612e07966d180e74ab213386385560d66baa44f44e90896de97"
+        "filename": "agentcollab-execution-candidate-691-1a5def1-r2.zip",
+        "sha256": "d83b5e436f282c989fe13c7c9a6d6f13a4054851945f6a2dc433187ba692c676"
+      },
+      "runtime": {
+        "filename": "agentcollab-runtime-candidate-691-1a5def1-r2.zip",
+        "sha256": "16174868a8298e6f3b3daeec61d3add8ed98dd6b85a634dc0461ea84147ce0f6"
       }
     }
   },
@@ -33,6 +33,6 @@
   },
   "bootstrap": {
     "name": "agentcollab-bootstrap.py",
-    "sha256": "b8f485dac5b119b5049427b02b623a97be947f35bba70a5a4a14e68b719c7fc6"
+    "sha256": "7e4fc0af72b6c586ea58543c77f9229edfa3c33d5260a98b72badc5f4305b680"
   }
 }
