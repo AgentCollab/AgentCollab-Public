@@ -10,8 +10,8 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "v0.2.0-beta.1"
-PUBLIC = "lkhkhk/AgentCollab-Public"
+VERSION = "v0.2.0-beta.2"
+PUBLIC = "AgentCollab/AgentCollab-Public"
 
 
 class LauncherTests(unittest.TestCase):
@@ -87,6 +87,14 @@ esac
         self.assertNotIn("development_setup.py", content)
         self.assertNotIn("guided_installer", content)
         self.assertFalse((ROOT / "agentcollab-installer.py").exists())
+
+    def test_checked_in_candidate_manifest_binds_org_addresses_and_bootstrap_digest(self):
+        manifest = json.loads((ROOT / "installer-manifest.json").read_text(encoding="utf-8"))
+        bootstrap = (ROOT / "agentcollab-bootstrap.py").read_bytes()
+        self.assertEqual(VERSION, manifest["version"])
+        self.assertEqual(PUBLIC, manifest["public_repository"])
+        self.assertEqual("AgentCollab/AgentCollab-Distribution", manifest["distribution"]["repository"])
+        self.assertEqual(hashlib.sha256(bootstrap).hexdigest(), manifest["bootstrap"]["sha256"])
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Authenticated bootstrap for the personal AgentCollab package installer."""
+"""Authenticated bootstrap for the AgentCollab package installer."""
 from __future__ import annotations
 
 import argparse
@@ -15,10 +15,10 @@ import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath
 
-PUBLIC_REPOSITORY = "lkhkhk/AgentCollab-Public"
-DISTRIBUTION_REPOSITORY = "lkhkhk/AgentCollab-Distribution"
+PUBLIC_REPOSITORY = "AgentCollab/AgentCollab-Public"
+DISTRIBUTION_REPOSITORY = "AgentCollab/AgentCollab-Distribution"
 SOURCE_REPOSITORY = "lkhkhk/AgentCollab"
-BETA_VERSION = "v0.2.0-beta.1"
+BETA_VERSION = "v0.2.0-beta.2"
 DISTRIBUTION_BETA_TAG = "v0.2.0-beta.1"
 SETUP_PATH = "deploy/setup.py"
 MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
@@ -121,7 +121,7 @@ def _read_zip(raw: bytes, kind: str, public_manifest: dict) -> tuple[dict, bytes
         raise BootstrapError("BLOCKED", "package-verification",
                              f"{kind.title()} package provenance or managed-file verification failed.") from error
     expected_source = public_manifest["source"]
-    expected_release = public_manifest["version"]
+    expected_release = public_manifest["distribution"]["release_tag"]
     if (package_manifest.get("product") != "AgentCollab"
             or package_manifest.get("release_version") != expected_release
             or package_manifest.get("source") != {
@@ -146,7 +146,7 @@ def verify_bundle(public_manifest: dict, release_manifest_raw: bytes,
     if (not isinstance(release, dict) or release.get("schema_version") != 1
             or release.get("product") != "AgentCollab" or release.get("channel") != "beta"
             or release.get("release_tag") != public_manifest["distribution"]["release_tag"]
-            or release.get("release_version") != public_manifest["version"]
+            or release.get("release_version") != public_manifest["distribution"]["release_tag"]
             or release.get("source") != {"repository": expected_source["repository"], "commit": expected_source["commit"]}
             or release.get("service_branch") != expected_source["service_branch"]
             or not isinstance(release_setup, dict)

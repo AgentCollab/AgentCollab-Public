@@ -1,7 +1,7 @@
-# 설치 안내 (v0.2.0-beta.1 Beta)
+# 설치 안내 (v0.2.0-beta.2 Beta metadata candidate)
 
 1. GitHub CLI를 설치하고 `gh auth login`으로 인증합니다.
-2. 계정이 private `lkhkhk/AgentCollab-Distribution` 저장소에 접근할 수 있는지 확인합니다. 접근 권한이 없으면 저장소 소유자에게 요청하세요.
+2. 계정이 private `AgentCollab/AgentCollab-Distribution` 저장소에 접근할 수 있는지 확인합니다. 접근 권한이 없으면 저장소 소유자에게 요청하세요.
 3. 원하는 디렉터리로 이동하고 `install.sh plan`을 실행합니다. 기본 설치 위치는 현재 디렉터리의 `./agentcollab`입니다. `--installation-root <path>`를 지정하면 해당 경로를 사용합니다.
 4. 출력된 계획과 필요한 prerequisite를 검토합니다. 설치 진행 시 `install.sh apply --approved-plan-sha256 <PLAN_SHA256>`을 실행합니다.
 5. 설치 후 `install.sh verify`를 실행합니다.

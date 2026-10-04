@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
   "channel": "beta",
-  "version": "v0.2.0-beta.1",
-  "public_repository": "lkhkhk/AgentCollab-Public",
+  "version": "v0.2.0-beta.2",
+  "public_repository": "AgentCollab/AgentCollab-Public",
   "source": {
     "repository": "lkhkhk/AgentCollab",
     "commit": "1a5def1de57f8abccade2dcb4697fab26d1d45f5",
     "service_branch": "main"
   },
   "distribution": {
-    "repository": "lkhkhk/AgentCollab-Distribution",
+    "repository": "AgentCollab/AgentCollab-Distribution",
     "visibility": "private",
     "release_tag": "v0.2.0-beta.1",
     "release_manifest": {
@@ -33,6 +33,6 @@
   },
   "bootstrap": {
     "name": "agentcollab-bootstrap.py",
-    "sha256": "d0ce632cbc4544e7ab78aeb2f2427f9fa2b5c99b42064f2b9ca21ee9efadc53e"
+    "sha256": "45121e4d17f0b14312d4af9b5a9b9a087e8f0d2ab3474020fb3b2bfcf172b895"
   }
 }

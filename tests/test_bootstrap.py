@@ -11,6 +11,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
+PUBLIC_VERSION = "v0.2.0-beta.2"
+DIST_VERSION = "v0.2.0-beta.1"
 SPEC = importlib.util.spec_from_file_location("agentcollab_bootstrap", ROOT / "agentcollab-bootstrap.py")
 bootstrap = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(bootstrap)
@@ -23,7 +25,7 @@ def digest(data: bytes) -> str:
 def package(kind: str, setup: bytes = b"", contract: str = "1.0.0") -> bytes:
     managed = {"deploy/setup.py": setup} if kind == "runtime" else {"execution/task.json": b"{}"}
     manifest = {
-        "product": "AgentCollab", "release_version": "v0.2.0-beta.1",
+        "product": "AgentCollab", "release_version": DIST_VERSION,
         "source": {"repository": "lkhkhk/AgentCollab", "commit": "1a5def1de57f8abccade2dcb4697fab26d1d45f5"},
         "service_branch": "main", "execution_contract_version": contract,
         "managed_paths": list(managed), "files_sha256": {name: digest(data) for name, data in managed.items()},
@@ -44,11 +46,11 @@ class BootstrapTests(unittest.TestCase):
         self.setup_bytes = b"# verified setup fixture\n"
         self.runtime = package("runtime", self.setup_bytes)
         self.execution = package("execution")
-        self.runtime_name = "agentcollab-runtime-v0.2.0-beta.1.zip"
-        self.execution_name = "agentcollab-execution-v0.2.0-beta.1.zip"
+        self.runtime_name = f"agentcollab-runtime-{DIST_VERSION}.zip"
+        self.execution_name = f"agentcollab-execution-{DIST_VERSION}.zip"
         self.release = {
             "schema_version": 1, "product": "AgentCollab", "channel": "beta",
-            "release_tag": "v0.2.0-beta.1", "release_version": "v0.2.0-beta.1",
+            "release_tag": DIST_VERSION, "release_version": DIST_VERSION,
             "source": {"repository": "lkhkhk/AgentCollab", "commit": "1a5def1de57f8abccade2dcb4697fab26d1d45f5"},
             "service_branch": "main", "execution_contract_version": "1.0.0",
             "setup": {"package_path": "deploy/setup.py", "sha256": digest(self.setup_bytes)},
@@ -59,11 +61,11 @@ class BootstrapTests(unittest.TestCase):
         }
         self.release_raw = json.dumps(self.release, sort_keys=True).encode()
         self.manifest = {
-            "schema_version": 1, "channel": "beta", "version": "v0.2.0-beta.1",
-            "public_repository": "lkhkhk/AgentCollab-Public",
+            "schema_version": 1, "channel": "beta", "version": PUBLIC_VERSION,
+            "public_repository": "AgentCollab/AgentCollab-Public",
             "source": {"repository": "lkhkhk/AgentCollab", "commit": "1a5def1de57f8abccade2dcb4697fab26d1d45f5", "service_branch": "main"},
-            "distribution": {"repository": "lkhkhk/AgentCollab-Distribution", "visibility": "private",
-                "release_tag": "v0.2.0-beta.1",
+            "distribution": {"repository": "AgentCollab/AgentCollab-Distribution", "visibility": "private",
+                "release_tag": DIST_VERSION,
                 "release_manifest": {"name": "agentcollab-release-manifest.json", "sha256": digest(self.release_raw)},
                 "packages": self.release["packages"]},
             "setup": {"path": "deploy/setup.py", "sha256": digest(self.setup_bytes)},

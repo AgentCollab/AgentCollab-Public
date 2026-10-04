@@ -1,8 +1,8 @@
 #!/bin/sh
 set -eu
 
-VERSION='v0.2.0-beta.1'
-PUBLIC_REPOSITORY='lkhkhk/AgentCollab-Public'
+VERSION='v0.2.0-beta.2'
+PUBLIC_REPOSITORY='AgentCollab/AgentCollab-Public'
 MANIFEST_URL="https://raw.githubusercontent.com/${PUBLIC_REPOSITORY}/${VERSION}/installer-manifest.json"
 BOOTSTRAP_URL="https://github.com/${PUBLIC_REPOSITORY}/releases/download/${VERSION}/agentcollab-bootstrap.py"
 
