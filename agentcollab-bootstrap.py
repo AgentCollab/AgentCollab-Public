@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Authenticated bootstrap for the personal AgentCollab package installer."""
+"""Authenticated bootstrap for the AgentCollab package installer."""
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import io
 import json
@@ -15,11 +16,13 @@ import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath
 
-PUBLIC_REPOSITORY = "lkhkhk/AgentCollab-Public"
-DISTRIBUTION_REPOSITORY = "lkhkhk/AgentCollab-Distribution"
+PUBLIC_REPOSITORY = "AgentCollab/AgentCollab-Public"
+DISTRIBUTION_REPOSITORY = "AgentCollab/AgentCollab-Distribution"
 SOURCE_REPOSITORY = "lkhkhk/AgentCollab"
-BETA_VERSION = "v0.2.0-beta.1"
-DISTRIBUTION_BETA_TAG = "v0.2.0-beta.1"
+INSTALLER_PROTOCOL = "distribution-catalog-v1"
+VERSION_PATTERN = re.compile(r"[0-9A-Za-z][0-9A-Za-z._+-]{0,63}")
+SERVICE_BRANCH_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*[A-Za-z0-9_]")
+CHANNELS = {"default", "beta", "stable"}
 SETUP_PATH = "deploy/setup.py"
 MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
 MAX_ARCHIVE_CONTENT_BYTES = 1024 * 1024 * 1024
@@ -47,50 +50,118 @@ def _asset_name(value: object) -> bool:
             and value not in {".", ".."} and "/" not in value and "\\" not in value)
 
 
-def validate_public_manifest(manifest: object) -> dict:
-    if not isinstance(manifest, dict):
-        raise BootstrapError("BLOCKED", "manifest", "Public release manifest is not an object.")
-    source = manifest.get("source")
-    distribution = manifest.get("distribution")
-    packages = distribution.get("packages") if isinstance(distribution, dict) else None
-    setup = manifest.get("setup")
+def validate_installer_manifest(manifest: object, bootstrap_bytes: bytes) -> dict:
+    if (not isinstance(manifest, dict) or manifest.get("schema_version") != 1
+            or manifest.get("protocol") != INSTALLER_PROTOCOL
+            or manifest.get("public_repository") != PUBLIC_REPOSITORY
+            or set(manifest) != {"schema_version", "protocol", "public_repository", "bootstrap"}):
+        raise BootstrapError("BLOCKED", "installer-identity", "Generic Public installer metadata is invalid.")
     bootstrap = manifest.get("bootstrap")
-    release_manifest = distribution.get("release_manifest") if isinstance(distribution, dict) else None
-    if (manifest.get("schema_version") != 1 or manifest.get("channel") != "beta"
-            or manifest.get("version") != BETA_VERSION
-            or manifest.get("public_repository") != PUBLIC_REPOSITORY):
-        raise BootstrapError("BLOCKED", "manifest", "Public beta identity or channel is invalid.")
-    if (not isinstance(source, dict) or source.get("repository") != SOURCE_REPOSITORY
-            or not re.fullmatch(r"[0-9a-f]{40}", str(source.get("commit", "")))
-            or source.get("service_branch") != "main"):
-        raise BootstrapError("BLOCKED", "manifest", "Private source provenance or stable service branch is invalid.")
-    if (not isinstance(distribution, dict)
-            or distribution.get("repository") != DISTRIBUTION_REPOSITORY
-            or distribution.get("visibility") != "private"
-            or distribution.get("release_tag") != DISTRIBUTION_BETA_TAG
-            or not isinstance(release_manifest, dict)
+    if (not isinstance(bootstrap, dict) or set(bootstrap) != {"name", "sha256"}
+            or bootstrap.get("name") != "agentcollab-bootstrap.py"
+            or not _digest(bootstrap.get("sha256")) or _sha256(bootstrap_bytes) != bootstrap["sha256"]):
+        raise BootstrapError("BLOCKED", "installer-identity", "Public bootstrap does not match its checked-in identity digest.")
+    return manifest
+
+
+def _valid_version(value: object) -> bool:
+    return isinstance(value, str) and VERSION_PATTERN.fullmatch(value) is not None
+
+
+def _valid_service_branch(value: object) -> bool:
+    return (isinstance(value, str) and SERVICE_BRANCH_PATTERN.fullmatch(value) is not None
+            and ".." not in value and "@{" not in value and "//" not in value
+            and all(part and not part.startswith(".") and not part.endswith(".lock")
+                    for part in value.split("/")))
+
+
+def _validate_version_record(record: object, version: str) -> dict:
+    release_manifest = record.get("release_manifest") if isinstance(record, dict) else None
+    if (not isinstance(record, dict) or record.get("schema_version") != 1
+            or set(record) != {"schema_version", "product", "version", "kind", "release_tag", "release_manifest"}
+            or record.get("product") != "AgentCollab" or record.get("version") != version
+            or not isinstance(record.get("kind"), str) or record.get("kind") not in {"candidate", "release"}
+            or record.get("release_tag") != version or not isinstance(release_manifest, dict)
+            or set(release_manifest) != {"name", "sha256"}
             or not _asset_name(release_manifest.get("name"))
             or not release_manifest["name"].startswith("agentcollab-release-manifest")
             or not release_manifest["name"].endswith(".json")
             or not _digest(release_manifest.get("sha256"))):
-        raise BootstrapError("BLOCKED", "manifest", "Private Distribution release identity is invalid.")
-    if not isinstance(packages, dict) or not isinstance(setup, dict) or setup.get("path") != SETUP_PATH:
-        raise BootstrapError("BLOCKED", "manifest", "Runtime/Execution package metadata is incomplete.")
-    for kind in ("runtime", "execution"):
-        item = packages.get(kind)
-        if (not isinstance(item, dict) or not _asset_name(item.get("filename"))
-                or not _digest(item.get("sha256"))):
-            raise BootstrapError("BLOCKED", "manifest", f"{kind.title()} package identity or SHA-256 is invalid.")
-    if not _digest(setup.get("sha256")):
-        raise BootstrapError("BLOCKED", "manifest", "Packaged deploy/setup.py SHA-256 is invalid.")
-    if (not isinstance(bootstrap, dict) or bootstrap.get("name") != "agentcollab-bootstrap.py"
-            or not _digest(bootstrap.get("sha256"))):
-        raise BootstrapError("BLOCKED", "manifest", "Public bootstrap identity or SHA-256 is invalid.")
-    return manifest
+        raise BootstrapError("BLOCKED", "version-record", "Distribution version record is invalid or mismatched.")
+    return record
 
 
-def _read_zip(raw: bytes, kind: str, public_manifest: dict) -> tuple[dict, bytes]:
-    expected = public_manifest["distribution"]["packages"][kind]
+def _validate_channel_pointer(pointer: object, channel: str) -> tuple[str, dict]:
+    version = pointer.get("version") if isinstance(pointer, dict) else None
+    record_ref = pointer.get("version_record") if isinstance(pointer, dict) else None
+    expected_path = f"versions/{version}.json" if _valid_version(version) else None
+    if (not isinstance(pointer, dict) or pointer.get("schema_version") != 1
+            or set(pointer) != {"schema_version", "product", "channel", "version", "version_record"}
+            or pointer.get("product") != "AgentCollab" or pointer.get("channel") != channel
+            or expected_path is None or not isinstance(record_ref, dict)
+            or set(record_ref) != {"path", "sha256"}
+            or record_ref.get("path") != expected_path or not _digest(record_ref.get("sha256"))):
+        raise BootstrapError("BLOCKED", "channel-pointer", "Distribution channel pointer is invalid or mismatched.")
+    return version, record_ref
+
+
+def _read_catalog_json(path: str, run=None) -> tuple[dict, bytes]:
+    run = run or _run
+    result = run(["gh", "api", f"repos/{DISTRIBUTION_REPOSITORY}/contents/{path}"])
+    if not result or result.returncode:
+        raise BootstrapError("BLOCKED", "distribution-catalog",
+                             f"Authenticated Distribution catalog entry is unavailable: {path}.")
+    try:
+        response = json.loads(result.stdout)
+        if not isinstance(response, dict) or response.get("encoding") != "base64":
+            raise ValueError("catalog content is not base64")
+        content = response.get("content")
+        if not isinstance(content, str):
+            raise ValueError("catalog content is missing")
+        raw = base64.b64decode("".join(content.split()), validate=True)
+        value = json.loads(raw)
+        if not isinstance(value, dict):
+            raise ValueError("catalog JSON is not an object")
+        return value, raw
+    except (TypeError, ValueError, UnicodeError, json.JSONDecodeError) as error:
+        raise BootstrapError("BLOCKED", "distribution-catalog",
+                             f"Authenticated Distribution catalog entry is malformed: {path}.") from error
+
+
+def resolve_version(*, requested_version: str | None, requested_channel: str | None,
+                    run=None) -> tuple[str, dict, dict, str]:
+    run = run or _run
+    if requested_version is not None and requested_channel is not None:
+        raise BootstrapError("BLOCKED", "selector", "--version and --channel cannot be used together.")
+    if requested_version is not None:
+        if not _valid_version(requested_version):
+            raise BootstrapError("BLOCKED", "selector", "Requested version is not path-safe.")
+        version = requested_version
+        record, raw = _read_catalog_json(f"versions/{version}.json", run)
+        return version, _validate_version_record(record, version), {
+            "kind": "version", "value": version,
+        }, _sha256(raw)
+
+    channel = requested_channel or "default"
+    if channel not in CHANNELS:
+        raise BootstrapError("BLOCKED", "selector", "Requested channel is unsupported.")
+    pointer, _raw = _read_catalog_json(f"channels/{channel}.json", run)
+    version, record_ref = _validate_channel_pointer(pointer, channel)
+    record, record_raw = _read_catalog_json(record_ref["path"], run)
+    if _sha256(record_raw) != record_ref["sha256"]:
+        raise BootstrapError("BLOCKED", "version-record", "Distribution version record SHA-256 mismatch.")
+    record = _validate_version_record(record, version)
+    if record["kind"] != "release":
+        raise BootstrapError("BLOCKED", "version-record",
+                             "Channel pointers may reference only Distribution kind=release versions.")
+    return version, record, {
+        "kind": "default" if requested_channel is None else "channel",
+        "value": channel,
+    }, _sha256(record_raw)
+
+
+def _read_zip(raw: bytes, kind: str, release: dict) -> tuple[dict, bytes]:
+    expected = release["packages"][kind]
     if len(raw) > MAX_ARCHIVE_BYTES or _sha256(raw) != expected["sha256"]:
         raise BootstrapError("BLOCKED", "package-verification", f"{kind.title()} package SHA-256 mismatch.")
     manifest_path = (".agentcollab/runtime-manifest.json" if kind == "runtime"
@@ -120,42 +191,67 @@ def _read_zip(raw: bytes, kind: str, public_manifest: dict) -> tuple[dict, bytes
     except (OSError, KeyError, TypeError, ValueError, zipfile.BadZipFile, json.JSONDecodeError) as error:
         raise BootstrapError("BLOCKED", "package-verification",
                              f"{kind.title()} package provenance or managed-file verification failed.") from error
-    expected_source = public_manifest["source"]
-    expected_release = public_manifest["version"]
+    expected_source = release["source"]
+    expected_release = release["release_tag"]
     if (package_manifest.get("product") != "AgentCollab"
             or package_manifest.get("release_version") != expected_release
             or package_manifest.get("source") != {
                 "repository": expected_source["repository"], "commit": expected_source["commit"]}
-            or package_manifest.get("service_branch") != expected_source["service_branch"]):
+            or package_manifest.get("service_branch") != release["service_branch"]):
         raise BootstrapError("BLOCKED", "package-verification", f"{kind.title()} package source provenance mismatch.")
-    if kind == "runtime" and _sha256(setup_bytes) != public_manifest["setup"]["sha256"]:
+    if kind == "runtime" and _sha256(setup_bytes) != release["setup"]["sha256"]:
         raise BootstrapError("BLOCKED", "package-verification", "Packaged deploy/setup.py SHA-256 mismatch.")
     return package_manifest, setup_bytes
 
 
-def verify_bundle(public_manifest: dict, release_manifest_raw: bytes,
-                  runtime_raw: bytes, execution_raw: bytes) -> tuple[dict, dict, bytes]:
-    if _sha256(release_manifest_raw) != public_manifest["distribution"]["release_manifest"]["sha256"]:
+def validate_release_manifest(version_record: dict, release_manifest_raw: bytes,
+                              requested_selector: dict) -> dict:
+    if _sha256(release_manifest_raw) != version_record["release_manifest"]["sha256"]:
         raise BootstrapError("BLOCKED", "release-verification", "Private release manifest SHA-256 mismatch.")
     try:
         release = json.loads(release_manifest_raw)
     except (UnicodeError, json.JSONDecodeError) as error:
         raise BootstrapError("BLOCKED", "release-verification", "Private release manifest is invalid.") from error
-    expected_source = public_manifest["source"]
-    release_setup = release.get("setup") if isinstance(release, dict) else None
+    source = release.get("source") if isinstance(release, dict) else None
+    packages = release.get("packages") if isinstance(release, dict) else None
+    setup = release.get("setup") if isinstance(release, dict) else None
+    version = version_record["version"]
     if (not isinstance(release, dict) or release.get("schema_version") != 1
-            or release.get("product") != "AgentCollab" or release.get("channel") != "beta"
-            or release.get("release_tag") != public_manifest["distribution"]["release_tag"]
-            or release.get("release_version") != public_manifest["version"]
-            or release.get("source") != {"repository": expected_source["repository"], "commit": expected_source["commit"]}
-            or release.get("service_branch") != expected_source["service_branch"]
-            or not isinstance(release_setup, dict)
-            or release_setup.get("package_path") != public_manifest["setup"]["path"]
-            or release_setup.get("sha256") != public_manifest["setup"]["sha256"]
-            or release.get("packages") != public_manifest["distribution"]["packages"]):
-        raise BootstrapError("BLOCKED", "release-verification", "Private release provenance differs from the Public beta manifest.")
-    runtime, setup_bytes = _read_zip(runtime_raw, "runtime", public_manifest)
-    execution, _ = _read_zip(execution_raw, "execution", public_manifest)
+            or release.get("product") != "AgentCollab"
+            or not isinstance(release.get("channel"), str) or release.get("channel") not in {"beta", "stable"}
+            or release.get("release_tag") != version or release.get("release_version") != version
+            or not isinstance(source, dict) or source.get("repository") != SOURCE_REPOSITORY
+            or not re.fullmatch(r"[0-9a-f]{40}", str(source.get("commit", "")))
+            or not isinstance(release.get("service_branch"), str)
+            or not isinstance(setup, dict) or setup.get("package_path") != SETUP_PATH
+            or not _digest(setup.get("sha256")) or not isinstance(release.get("execution_contract_version"), str)
+            or not release["execution_contract_version"]
+            or not isinstance(packages, dict)):
+        raise BootstrapError("BLOCKED", "release-verification", "Private release provenance or identity is invalid.")
+    service_branch = release["service_branch"]
+    if not _valid_service_branch(service_branch):
+        raise BootstrapError("BLOCKED", "release-verification", "Private release service branch is invalid.")
+    if version_record["kind"] == "release" and service_branch != "main":
+        raise BootstrapError("BLOCKED", "release-verification", "Distribution kind=release requires service_branch=main.")
+    if version_record["kind"] == "candidate" and service_branch != "main" and not service_branch.startswith("work/"):
+        raise BootstrapError("BLOCKED", "release-verification",
+                             "Distribution kind=candidate requires service_branch=main or a work/* branch.")
+    if requested_selector["kind"] in {"default", "channel"} and service_branch != "main":
+        raise BootstrapError("BLOCKED", "release-verification",
+                             "Channel/default Distribution selection requires service_branch=main.")
+    for kind in ("runtime", "execution"):
+        item = packages.get(kind)
+        if (not isinstance(item, dict) or not _asset_name(item.get("filename"))
+                or not _digest(item.get("sha256"))):
+            raise BootstrapError("BLOCKED", "release-verification",
+                                 f"Private {kind.title()} package identity or SHA-256 is invalid.")
+    return release
+
+
+def verify_bundle(release: dict, runtime_raw: bytes,
+                  execution_raw: bytes) -> tuple[dict, dict, bytes]:
+    runtime, setup_bytes = _read_zip(runtime_raw, "runtime", release)
+    execution, _ = _read_zip(execution_raw, "execution", release)
     pair_fields = ("release_version", "execution_contract_version", "source", "service_branch")
     if any(runtime.get(field) != execution.get(field) for field in pair_fields):
         raise BootstrapError("BLOCKED", "package-verification", "Runtime and Execution packages are not a compatible release pair.")
@@ -214,36 +310,45 @@ def require_github_auth(run=_run, which=shutil.which) -> None:
                              "Refresh `gh auth login`, then rerun.")
 
 
-def _download_bundle(manifest: dict, directory: Path, run=_run) -> tuple[bytes, bytes, bytes]:
-    distribution = manifest["distribution"]
-    release_manifest_name = distribution["release_manifest"]["name"]
-    runtime_name = distribution["packages"]["runtime"]["filename"]
-    execution_name = distribution["packages"]["execution"]["filename"]
-    args = ["gh", "release", "download", distribution["release_tag"],
-            "--repo", distribution["repository"], "--dir", str(directory)]
-    for name in (release_manifest_name, runtime_name, execution_name):
+def _download_release_manifest(record: dict, directory: Path, run=None) -> bytes:
+    run = run or _run
+    name = record["release_manifest"]["name"]
+    result = run(["gh", "release", "download", record["release_tag"], "--repo", DISTRIBUTION_REPOSITORY,
+                  "--dir", str(directory), "--pattern", name], timeout=300)
+    if not result or result.returncode:
+        raise BootstrapError("BLOCKED", "distribution-download", "The exact Distribution release manifest is unavailable.")
+    try:
+        return (directory / name).read_bytes()
+    except OSError as error:
+        raise BootstrapError("BLOCKED", "distribution-download", "The exact release manifest asset is missing.") from error
+
+
+def _download_packages(release: dict, directory: Path, run=None) -> tuple[bytes, bytes]:
+    run = run or _run
+    names = [release["packages"][kind]["filename"] for kind in ("runtime", "execution")]
+    args = ["gh", "release", "download", release["release_tag"], "--repo", DISTRIBUTION_REPOSITORY,
+            "--dir", str(directory)]
+    for name in names:
         args.extend(["--pattern", name])
     result = run(args, timeout=300)
     if not result or result.returncode:
-        raise BootstrapError("ACTION_REQUIRED", "distribution-download",
-                             "Private beta assets are unavailable to this GitHub identity.",
-                             "Confirm AgentCollab-Distribution access with the repository owner, then rerun.")
+        raise BootstrapError("BLOCKED", "distribution-download", "Exact Runtime/Execution release assets are unavailable.")
     try:
-        return ((directory / release_manifest_name).read_bytes(),
-                (directory / runtime_name).read_bytes(),
-                (directory / execution_name).read_bytes())
+        return (directory / names[0]).read_bytes(), (directory / names[1]).read_bytes()
     except OSError as error:
-        raise BootstrapError("BLOCKED", "distribution-download", "A required private release asset is missing.") from error
+        raise BootstrapError("BLOCKED", "distribution-download", "A required exact release asset is missing.") from error
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("phase", nargs="?", choices=("plan", "apply", "verify"), default="plan")
     parser.add_argument("--manifest", type=Path, required=True, help=argparse.SUPPRESS)
+    parser.add_argument("--version", help="exact immutable Distribution version")
+    parser.add_argument("--channel", help="Distribution channel pointer: default, beta, or stable")
     parser.add_argument("--installation-root", type=Path,
                         help="personal installation root (default: ./agentcollab from the current directory)")
     parser.add_argument("--control-repository", help="existing personal Execution repository to reuse")
-    parser.add_argument("--web-port", type=int, default=8080)
+    parser.add_argument("--web-port", type=int, help="explicit Web port (omitted preserves automatic port selection)")
     parser.add_argument("--service-name", default="agentcollab-web.service")
     parser.add_argument("--runner-root", type=Path)
     parser.add_argument("--runner-selector", action="append")
@@ -258,17 +363,34 @@ def run_bootstrap(argv=None, *, command_fn=_run, which=shutil.which,
     parser = _parser()
     args = parser.parse_args(argv)
     try:
-        public_manifest = validate_public_manifest(json.loads(args.manifest.read_text(encoding="utf-8")))
+        if args.version is not None and args.channel is not None:
+            raise BootstrapError("BLOCKED", "selector", "--version and --channel cannot be used together.")
+        if args.phase == "apply" and args.version is None:
+            raise BootstrapError("ACTION_REQUIRED", "selector",
+                                 "APPLY requires the exact version resolved by the reviewed PLAN.",
+                                 "Rerun APPLY with `--version <resolved_version>` from PLAN evidence.")
+        if args.phase == "apply" and (not args.approved_plan_sha256 or not _digest(args.approved_plan_sha256)):
+            raise BootstrapError("ACTION_REQUIRED", "plan-approval",
+                                 "APPLY requires the reviewed PLAN SHA-256.",
+                                 "Run `install.sh plan`, review the result, then pass its plan_sha256 to APPLY.")
+        if args.phase != "apply" and args.approved_plan_sha256:
+            raise BootstrapError("BLOCKED", "plan-approval", "--approved-plan-sha256 is only valid with APPLY.")
+        bootstrap_bytes = Path(__file__).read_bytes()
+        validate_installer_manifest(
+            json.loads(args.manifest.read_text(encoding="utf-8")), bootstrap_bytes)
         require_github_auth(command_fn, which)
+        version, version_record, requested_selector, version_record_sha256 = resolve_version(
+            requested_version=args.version, requested_channel=args.channel, run=command_fn)
         installation_root = (args.installation_root.expanduser().resolve(strict=False) if args.installation_root
                              else ((cwd or Path.cwd()) / "agentcollab").resolve(strict=False))
         with tempfile.TemporaryDirectory(prefix="agentcollab-private-packages-") as temporary:
             download_dir = Path(temporary)
-            release_raw, runtime_raw, execution_raw = _download_bundle(public_manifest, download_dir, command_fn)
-            _release, _runtime_manifest, _setup_bytes = verify_bundle(
-                public_manifest, release_raw, runtime_raw, execution_raw)
-            runtime_package = download_dir / public_manifest["distribution"]["packages"]["runtime"]["filename"]
-            execution_package = download_dir / public_manifest["distribution"]["packages"]["execution"]["filename"]
+            release_raw = _download_release_manifest(version_record, download_dir, command_fn)
+            release = validate_release_manifest(version_record, release_raw, requested_selector)
+            runtime_raw, execution_raw = _download_packages(release, download_dir, command_fn)
+            _release, _runtime_manifest, _setup_bytes = verify_bundle(release, runtime_raw, execution_raw)
+            runtime_package = download_dir / release["packages"]["runtime"]["filename"]
+            execution_package = download_dir / release["packages"]["execution"]["filename"]
             runtime_package.write_bytes(runtime_raw)
             execution_package.write_bytes(execution_raw)
             runtime_root = download_dir / "verified-runtime"
@@ -277,7 +399,9 @@ def run_bootstrap(argv=None, *, command_fn=_run, which=shutil.which,
                           "--installation-root", str(installation_root),
                           "--runtime-package", str(runtime_package),
                           "--execution-package", str(execution_package),
-                          "--web-port", str(args.web_port), "--service-name", args.service_name]
+                          "--service-name", args.service_name]
+            if args.web_port is not None:
+                setup_args.extend(["--web-port", str(args.web_port)])
             if args.control_repository:
                 setup_args.extend(["--control-repository", args.control_repository])
             if args.runner_root:
@@ -289,17 +413,25 @@ def run_bootstrap(argv=None, *, command_fn=_run, which=shutil.which,
             if args.skip_actions_credentials:
                 setup_args.append("--skip-actions-credentials")
             if args.phase == "apply":
-                if not args.approved_plan_sha256 or not _digest(args.approved_plan_sha256):
-                    raise BootstrapError("ACTION_REQUIRED", "plan-approval",
-                                         "APPLY requires the reviewed PLAN SHA-256.",
-                                         "Run `install.sh plan`, review the result, then pass its plan_sha256 to APPLY.")
                 setup_args.extend(["--approved-plan-sha256", args.approved_plan_sha256])
-            elif args.approved_plan_sha256:
-                parser.error("--approved-plan-sha256 is only valid with APPLY")
             runner = setup_command_fn or subprocess.run
             environment = dict(os.environ)
             prior_pythonpath = environment.get("PYTHONPATH")
             environment["PYTHONPATH"] = str(runtime_root) + (os.pathsep + prior_pythonpath if prior_pythonpath else "")
+            print(json.dumps({
+                "phase": "distribution-resolution",
+                "requested_selector": requested_selector,
+                "resolved_version": version,
+                "distribution": {
+                    "repository": DISTRIBUTION_REPOSITORY,
+                    "version_kind": version_record["kind"],
+                    "release_tag": version_record["release_tag"],
+                    "version_record_path": f"versions/{version}.json",
+                    "version_record_sha256": version_record_sha256,
+                    "release_manifest": version_record["release_manifest"],
+                },
+                "source": {**release["source"], "service_branch": release["service_branch"]},
+            }, sort_keys=True), file=sys.stderr)
             result = runner(setup_args, check=False, cwd=runtime_root, env=environment)
             return int(getattr(result, "returncode", 2))
     except BootstrapError as error:

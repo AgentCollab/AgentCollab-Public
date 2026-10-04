@@ -1,38 +1,9 @@
 {
   "schema_version": 1,
-  "channel": "beta",
-  "version": "v0.2.0-beta.1",
-  "public_repository": "lkhkhk/AgentCollab-Public",
-  "source": {
-    "repository": "lkhkhk/AgentCollab",
-    "commit": "1a5def1de57f8abccade2dcb4697fab26d1d45f5",
-    "service_branch": "main"
-  },
-  "distribution": {
-    "repository": "lkhkhk/AgentCollab-Distribution",
-    "visibility": "private",
-    "release_tag": "v0.2.0-beta.1",
-    "release_manifest": {
-      "name": "agentcollab-release-manifest-v0.2.0-beta.1-final.json",
-      "sha256": "bdc8d3685da59156f1c7376065d33a005a0f9cf0051b078783bad01873db6fcb"
-    },
-    "packages": {
-      "execution": {
-        "filename": "agentcollab-execution-v0.2.0-beta.1.zip",
-        "sha256": "5f887057c8b123d1bf37ff661a56a4f031da9f99e9d962ef1d6d460252a8fd6c"
-      },
-      "runtime": {
-        "filename": "agentcollab-runtime-v0.2.0-beta.1.zip",
-        "sha256": "f93312fba4cbf0329e82dffc83b2ce5e80803d24729bce42be48555357e2c4e5"
-      }
-    }
-  },
-  "setup": {
-    "path": "deploy/setup.py",
-    "sha256": "2c4b5ee9fc24509b051a8ee52f9202ed6ab9cfef73a67f395e8e58222ae810b8"
-  },
+  "protocol": "distribution-catalog-v1",
+  "public_repository": "AgentCollab/AgentCollab-Public",
   "bootstrap": {
     "name": "agentcollab-bootstrap.py",
-    "sha256": "d0ce632cbc4544e7ab78aeb2f2427f9fa2b5c99b42064f2b9ca21ee9efadc53e"
+    "sha256": "69e78679cb5902d9e12a80bede06e28763310ed86528bd9110d5ebb50229fc58"
   }
 }

@@ -1,0 +1,1 @@
+"""AgentCollab Public installer tests."""

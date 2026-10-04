@@ -1,5 +1,5 @@
-# Beta 배포 경계
+# Public installer boundary
 
-이 Public beta release에는 설치 진입점과 bootstrap만 포함됩니다. 전체 소스, Runtime ZIP, Execution ZIP은 포함하지 않습니다. 패키지는 private `lkhkhk/AgentCollab-Distribution` release에서 인증된 GitHub CLI로 받습니다. 공개 manifest는 source commit, main 서비스 브랜치, release manifest digest, package SHA-256, setup digest를 고정합니다.
+This repository contains the generic installer entry point, bootstrap, protocol metadata, documentation, and tests. It does not contain product-version selection, Runtime/Execution package bytes, or private release manifests.
 
-이 beta는 stable release 또는 production 배포가 아닙니다.
+The private `AgentCollab/AgentCollab-Distribution` repository is the immutable product-version authority. Public users authenticate with GitHub CLI; the bootstrap reads channel/version catalog entries with authenticated `gh api` and downloads only the exact versioned release assets selected by the catalog or explicit `--version`.
