@@ -59,7 +59,7 @@ def validate_public_manifest(manifest: object) -> dict:
     if (manifest.get("schema_version") != 1 or manifest.get("channel") != "beta"
             or manifest.get("version") != BETA_VERSION
             or manifest.get("public_repository") != PUBLIC_REPOSITORY):
-        raise BootstrapError("BLOCKED", "manifest", "Public beta candidate identity or channel is invalid.")
+        raise BootstrapError("BLOCKED", "manifest", "Public beta identity or channel is invalid.")
     if (not isinstance(source, dict) or source.get("repository") != SOURCE_REPOSITORY
             or not re.fullmatch(r"[0-9a-f]{40}", str(source.get("commit", "")))
             or source.get("service_branch") != "main"):
@@ -226,7 +226,7 @@ def _download_bundle(manifest: dict, directory: Path, run=_run) -> tuple[bytes, 
     result = run(args, timeout=300)
     if not result or result.returncode:
         raise BootstrapError("ACTION_REQUIRED", "distribution-download",
-                             "Private candidate assets are unavailable to this GitHub identity.",
+                             "Private beta assets are unavailable to this GitHub identity.",
                              "Confirm AgentCollab-Distribution access with the repository owner, then rerun.")
     try:
         return ((directory / release_manifest_name).read_bytes(),
@@ -310,7 +310,7 @@ def run_bootstrap(argv=None, *, command_fn=_run, which=shutil.which,
         return 1 if error.status == "ACTION_REQUIRED" else 2
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         print(json.dumps({"status": "BLOCKED", "phase": "manifest",
-                          "reason": "Public candidate manifest could not be read safely."},
+                          "reason": "Public beta manifest could not be read safely."},
                          ensure_ascii=False, sort_keys=True), file=sys.stderr)
         return 2
 

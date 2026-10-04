@@ -37,13 +37,13 @@ if (not isinstance(value, dict) or value.get('schema_version') != 1
         or value.get('channel') != 'beta' or value.get('version') != version
         or value.get('public_repository') != repository
         or not isinstance(artifact, dict) or artifact.get('name') != 'agentcollab-bootstrap.py'):
-    raise SystemExit('beta candidate identity is invalid')
+    raise SystemExit('beta identity is invalid')
 digest = artifact.get('sha256')
 if not isinstance(digest, str) or not re.fullmatch(r'[0-9a-f]{64}', digest):
     raise SystemExit('bootstrap SHA-256 is invalid')
 print(digest)
 PY
-) || fail 'beta candidate manifest validation failed.'
+) || fail 'beta manifest validation failed.'
 
 curl -fsSL --proto '=https' --tlsv1.2 --output "$BOOTSTRAP_FILE" "$BOOTSTRAP_URL" || fail 'could not retrieve the beta bootstrap.'
 if [ "$DIGEST_TOOL" = sha256sum ]; then DIGEST_LINE=$(sha256sum "$BOOTSTRAP_FILE")
