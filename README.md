@@ -1,10 +1,16 @@
 # AgentCollab Public Installer
 
-This repository provides the generic AgentCollab installer protocol. It does not select or contain a current product release. The private `AgentCollab/AgentCollab-Distribution` repository is the authenticated authority for immutable version records, release manifests, and Runtime/Execution packages.
+AgentCollab Public Installer는 AgentCollab을 설치하고 검증하기 위한 공개 설치 진입점입니다. 설치기는 인증된 배포 카탈로그에서 선택한 버전을 확인한 뒤, 해당 버전의 설치 계획을 만듭니다.
 
-## Use
+## 저장소 역할
 
-Clone the Public repository and run its installer from the checkout:
+- **Public** — 범용 설치기와 설치 프로토콜을 제공합니다.
+- **Distribution** — 인증이 필요한 불변 버전 기록과 Runtime/Execution 패키지를 관리합니다.
+- **Source** — 제품 소스 코드와 패키지 출처를 관리합니다.
+
+## 시작하기
+
+Git과 GitHub CLI(`gh`)가 필요합니다. GitHub CLI에서 로그인한 계정은 비공개 Distribution 저장소를 읽을 수 있어야 합니다.
 
 ```sh
 git clone https://github.com/AgentCollab/AgentCollab-Public.git
@@ -13,17 +19,6 @@ gh auth login
 ./install.sh plan
 ```
 
-The GitHub identity must have read access to the private Distribution repository. The default installation root is `./agentcollab` under the current working directory.
+설치 계획을 검토한 다음 적용하고 검증하는 자세한 절차는 [INSTALL.md](INSTALL.md)를 참고하세요.
 
-```sh
-./install.sh plan                       # Distribution default pointer
-./install.sh plan --channel beta        # beta pointer
-./install.sh plan --channel stable      # stable pointer
-./install.sh plan --version VERSION     # exact immutable version
-```
-
-`--version` and `--channel` cannot be combined. Exact versions bypass channel pointers and may select an immutable candidate for DUT. Candidates cannot be selected through default/beta/stable pointers; pointer-selected versions must be `kind: release` and use Source `main`. A resolved version is used for all subsequent manifest/package reads; there is no fallback to another version.
-
-The bootstrap reports the requested selector, resolved version, Distribution release identity, and exact Source SHA to standard error. It verifies the channel pointer's version-record digest, release-manifest digest, Runtime/Execution hashes and provenance before invoking the setup engine.
-
-The setup engine chooses a Web port automatically when `--web-port` is omitted. An explicit `--web-port N` is forwarded unchanged.
+설치기는 저장소, 버전, 패키지 출처 또는 권한을 확인할 수 없으면 진행을 차단합니다. 차단을 우회하거나 다른 버전으로 자동 전환하지 않습니다.
