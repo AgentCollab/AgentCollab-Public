@@ -18,9 +18,9 @@ from pathlib import Path, PurePosixPath
 
 PUBLIC_REPOSITORY = "AgentCollab/AgentCollab-Public"
 DISTRIBUTION_REPOSITORY = "AgentCollab/AgentCollab-Distribution"
-SOURCE_REPOSITORY = "lkhkhk/AgentCollab"
 INSTALLER_PROTOCOL = "distribution-catalog-v1"
 VERSION_PATTERN = re.compile(r"[0-9A-Za-z][0-9A-Za-z._+-]{0,63}")
+SOURCE_REPOSITORY_PATTERN = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 SERVICE_BRANCH_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*[A-Za-z0-9_]")
 CHANNELS = {"default", "beta", "stable"}
 SETUP_PATH = "deploy/setup.py"
@@ -73,6 +73,13 @@ def _valid_service_branch(value: object) -> bool:
             and ".." not in value and "@{" not in value and "//" not in value
             and all(part and not part.startswith(".") and not part.endswith(".lock")
                     for part in value.split("/")))
+
+
+def _valid_source_repository(value: object) -> bool:
+    if not isinstance(value, str) or SOURCE_REPOSITORY_PATTERN.fullmatch(value) is None:
+        return False
+    owner, repository = value.split("/", 1)
+    return owner not in {".", ".."} and repository not in {".", ".."}
 
 
 def _validate_version_record(record: object, version: str) -> dict:
@@ -220,7 +227,7 @@ def validate_release_manifest(version_record: dict, release_manifest_raw: bytes,
             or release.get("product") != "AgentCollab"
             or not isinstance(release.get("channel"), str) or release.get("channel") not in {"beta", "stable"}
             or release.get("release_tag") != version or release.get("release_version") != version
-            or not isinstance(source, dict) or source.get("repository") != SOURCE_REPOSITORY
+            or not isinstance(source, dict) or not _valid_source_repository(source.get("repository"))
             or not re.fullmatch(r"[0-9a-f]{40}", str(source.get("commit", "")))
             or not isinstance(release.get("service_branch"), str)
             or not isinstance(setup, dict) or setup.get("package_path") != SETUP_PATH

@@ -27,11 +27,11 @@ def json_bytes(value: dict) -> bytes:
 
 
 def package(kind: str, version: str, source_commit: str, setup: bytes = b"", contract: str = "1.0.0",
-            service_branch: str = "main") -> bytes:
+            service_branch: str = "main", source_repository: str = "lkhkhk/AgentCollab") -> bytes:
     managed = {"deploy/setup.py": setup} if kind == "runtime" else {"execution/task.json": b"{}"}
     manifest = {
         "product": "AgentCollab", "release_version": version,
-        "source": {"repository": "lkhkhk/AgentCollab", "commit": source_commit},
+        "source": {"repository": source_repository, "commit": source_commit},
         "service_branch": service_branch, "execution_contract_version": contract,
         "managed_paths": list(managed), "files_sha256": {name: digest(data) for name, data in managed.items()},
     }
@@ -49,6 +49,7 @@ class BootstrapTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.version = "v9.1.0-beta.3"
+        self.source_repository = "lkhkhk/AgentCollab"
         self.source_commit = "1a5def1de57f8abccade2dcb4697fab26d1d45f5"
         self.setup_bytes = b"# verified setup fixture\n"
         self.runtime = package("runtime", self.version, self.source_commit, self.setup_bytes)
@@ -58,7 +59,7 @@ class BootstrapTests(unittest.TestCase):
         self.release = {
             "schema_version": 1, "product": "AgentCollab", "channel": "beta",
             "release_tag": self.version, "release_version": self.version,
-            "source": {"repository": "lkhkhk/AgentCollab", "commit": self.source_commit},
+            "source": {"repository": self.source_repository, "commit": self.source_commit},
             "service_branch": "main", "execution_contract_version": "1.0.0",
             "setup": {"package_path": "deploy/setup.py", "sha256": digest(self.setup_bytes)},
             "packages": {
@@ -105,13 +106,40 @@ class BootstrapTests(unittest.TestCase):
     def configure_kind_and_branch(self, kind="release", service_branch="main"):
         self.release["service_branch"] = service_branch
         self.runtime = package("runtime", self.version, self.source_commit, self.setup_bytes,
-                               service_branch=service_branch)
+                               service_branch=service_branch,
+                               source_repository=self.source_repository)
         self.execution = package("execution", self.version, self.source_commit,
-                                 service_branch=service_branch)
+                                 service_branch=service_branch,
+                                 source_repository=self.source_repository)
         self.release["packages"]["runtime"]["sha256"] = digest(self.runtime)
         self.release["packages"]["execution"]["sha256"] = digest(self.execution)
         self.release_raw = json_bytes(self.release)
         self.record["kind"] = kind
+        self.record["release_manifest"]["sha256"] = digest(self.release_raw)
+        self.record_raw = json_bytes(self.record)
+        self.pointer["version_record"]["sha256"] = digest(self.record_raw)
+        self.beta_pointer["version_record"]["sha256"] = digest(self.record_raw)
+        self.stable_pointer["version_record"]["sha256"] = digest(self.record_raw)
+        self.catalog[f"versions/{self.version}.json"] = self.record_raw
+        self.catalog["channels/default.json"] = json_bytes(self.pointer)
+        self.catalog["channels/beta.json"] = json_bytes(self.beta_pointer)
+        self.catalog["channels/stable.json"] = json_bytes(self.stable_pointer)
+        self.assets[self.record["release_manifest"]["name"]] = self.release_raw
+        self.assets[self.runtime_name] = self.runtime
+        self.assets[self.execution_name] = self.execution
+
+    def configure_source_repository(self, source_repository):
+        self.source_repository = source_repository
+        self.runtime = package("runtime", self.version, self.source_commit, self.setup_bytes,
+                               service_branch=self.release["service_branch"],
+                               source_repository=source_repository)
+        self.execution = package("execution", self.version, self.source_commit,
+                                 service_branch=self.release["service_branch"],
+                                 source_repository=source_repository)
+        self.release["source"]["repository"] = source_repository
+        self.release["packages"]["runtime"]["sha256"] = digest(self.runtime)
+        self.release["packages"]["execution"]["sha256"] = digest(self.execution)
+        self.release_raw = json_bytes(self.release)
         self.record["release_manifest"]["sha256"] = digest(self.release_raw)
         self.record_raw = json_bytes(self.record)
         self.pointer["version_record"]["sha256"] = digest(self.record_raw)
@@ -343,6 +371,44 @@ class BootstrapTests(unittest.TestCase):
         result, stderr = self.run_bootstrap()
         self.assertEqual(2, result)
         self.assertEqual("package-verification", json.loads(stderr)["phase"])
+
+    def test_alternate_source_repository_is_accepted_when_release_and_packages_match(self):
+        alternate = "renamed-owner/new-product-source"
+        self.configure_source_repository(alternate)
+        result, stderr = self.run_bootstrap()
+        self.assertEqual(0, result, stderr)
+        self.assertEqual(alternate, json.loads(stderr)["source"]["repository"])
+
+    def test_invalid_source_repository_syntax_is_rejected(self):
+        invalid_release = json.loads(json.dumps(self.release))
+        invalid_release["source"]["repository"] = "renamed-owner/../source"
+        raw = json_bytes(invalid_release)
+        record = dict(self.record, release_manifest={
+            **self.record["release_manifest"], "sha256": digest(raw)})
+        with self.assertRaises(bootstrap.BootstrapError) as raised:
+            bootstrap.validate_release_manifest(record, raw, {"kind": "version", "value": self.version})
+        self.assertEqual("release-verification", raised.exception.phase)
+
+    def test_runtime_source_repository_must_match_release_provenance(self):
+        alternate = "renamed-owner/new-product-source"
+        self.configure_source_repository(alternate)
+        mismatched_runtime = package(
+            "runtime", self.version, self.source_commit, self.setup_bytes,
+            source_repository="other-owner/new-product-source")
+        release = json.loads(json.dumps(self.release))
+        release["packages"]["runtime"]["sha256"] = digest(mismatched_runtime)
+        with self.assertRaises(bootstrap.BootstrapError) as raised:
+            bootstrap.verify_bundle(release, mismatched_runtime, self.execution)
+        self.assertEqual("package-verification", raised.exception.phase)
+
+    def test_execution_source_commit_must_match_release_provenance(self):
+        mismatched_execution = package(
+            "execution", self.version, "a" * 40, source_repository=self.source_repository)
+        release = json.loads(json.dumps(self.release))
+        release["packages"]["execution"]["sha256"] = digest(mismatched_execution)
+        with self.assertRaises(bootstrap.BootstrapError) as raised:
+            bootstrap.verify_bundle(release, self.runtime, mismatched_execution)
+        self.assertEqual("package-verification", raised.exception.phase)
 
     def test_package_source_setup_and_runtime_execution_pair_are_bound_to_manifest(self):
         with self.assertRaises(bootstrap.BootstrapError):
