@@ -6,7 +6,7 @@
 
 - 지원되는 Linux 환경과 `git`, Python 3, GitHub CLI(`gh`)가 필요합니다.
 - `gh auth login`으로 GitHub에 인증하세요.
-- 인증한 GitHub 계정은 비공개 `AgentCollab/AgentCollab-Distribution` 저장소를 읽을 권한이 있어야 합니다.
+- 인증한 GitHub 계정은 현재 Public 저장소의 installer manifest가 지정하는 비공개 Distribution 저장소를 읽을 권한이 있어야 합니다.
 - 설치기는 Distribution 카탈로그와 선택된 릴리스 자산을 인증된 방식으로 읽습니다.
 
 ## Public 저장소 준비
@@ -14,9 +14,12 @@
 원하는 작업 디렉터리에서 저장소를 clone하고 인증합니다.
 
 ```sh
-git clone https://github.com/AgentCollab/AgentCollab-Public.git
+PUBLIC_OWNER="${AGENTCOLLAB_GITHUB_OWNER:-AgentCollab}"
+gh repo clone "$PUBLIC_OWNER/AgentCollab-Public"
 gh auth login
 ```
+
+`AGENTCOLLAB_GITHUB_OWNER`는 Public 및 Distribution 저장소를 소유한 환경 조직으로 설정합니다. 지정하지 않으면 운영 조직을 기본값으로 사용합니다.
 
 설치기는 Public 체크아웃 경로를 통해 호출할 수 있습니다. 기본 설치 위치는 Public 저장소 위치와 무관하게 **명령을 실행한 현재 작업 디렉터리 아래의 `agentcollab/`**입니다.
 

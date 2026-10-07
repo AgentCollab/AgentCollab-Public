@@ -16,8 +16,7 @@ import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath
 
-PUBLIC_REPOSITORY = "AgentCollab/AgentCollab-Public"
-DISTRIBUTION_REPOSITORY = "AgentCollab/AgentCollab-Distribution"
+DISTRIBUTION_REPOSITORY = ""
 INSTALLER_PROTOCOL = "distribution-catalog-v1"
 VERSION_PATTERN = re.compile(r"[0-9A-Za-z][0-9A-Za-z._+-]{0,63}")
 SERVICE_BRANCH_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*[A-Za-z0-9_]")
@@ -49,17 +48,33 @@ def _asset_name(value: object) -> bool:
             and value not in {".", ".."} and "/" not in value and "\\" not in value)
 
 
+def _repository_owner(value: object, expected_name: str) -> str | None:
+    if not isinstance(value, str) or value.count("/") != 1:
+        return None
+    owner, name = value.split("/", 1)
+    if (name != expected_name or not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?", owner)):
+        return None
+    return owner
+
+
 def validate_installer_manifest(manifest: object, bootstrap_bytes: bytes) -> dict:
-    if (not isinstance(manifest, dict) or manifest.get("schema_version") != 1
+    if (not isinstance(manifest, dict) or manifest.get("schema_version") != 2
             or manifest.get("protocol") != INSTALLER_PROTOCOL
-            or manifest.get("public_repository") != PUBLIC_REPOSITORY
-            or set(manifest) != {"schema_version", "protocol", "public_repository", "bootstrap"}):
+            or set(manifest) != {"schema_version", "protocol", "public_repository",
+                                 "distribution_repository", "bootstrap"}):
         raise BootstrapError("BLOCKED", "installer-identity", "Generic Public installer metadata is invalid.")
+    public_owner = _repository_owner(manifest.get("public_repository"), "AgentCollab-Public")
+    distribution_owner = _repository_owner(manifest.get("distribution_repository"), "AgentCollab-Distribution")
+    if not public_owner or public_owner != distribution_owner:
+        raise BootstrapError("BLOCKED", "installer-identity",
+                             "Public and Distribution repository identities must use the same valid organization.")
     bootstrap = manifest.get("bootstrap")
     if (not isinstance(bootstrap, dict) or set(bootstrap) != {"name", "sha256"}
             or bootstrap.get("name") != "agentcollab-bootstrap.py"
             or not _digest(bootstrap.get("sha256")) or _sha256(bootstrap_bytes) != bootstrap["sha256"]):
         raise BootstrapError("BLOCKED", "installer-identity", "Public bootstrap does not match its checked-in identity digest.")
+    global DISTRIBUTION_REPOSITORY
+    DISTRIBUTION_REPOSITORY = manifest["distribution_repository"]
     return manifest
 
 
