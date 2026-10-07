@@ -13,11 +13,14 @@ AgentCollab Public Installer는 AgentCollab을 설치하고 검증하기 위한 
 Git과 GitHub CLI(`gh`)가 필요합니다. GitHub CLI에서 로그인한 계정은 비공개 Distribution 저장소를 읽을 수 있어야 합니다.
 
 ```sh
-git clone https://github.com/AgentCollab/AgentCollab-Public.git
+PUBLIC_OWNER="${AGENTCOLLAB_GITHUB_OWNER:-AgentCollab}"
+gh repo clone "$PUBLIC_OWNER/AgentCollab-Public"
 cd AgentCollab-Public
 gh auth login
 ./install.sh plan
 ```
+
+Set `AGENTCOLLAB_GITHUB_OWNER` to the organization that owns the environment's Public and Distribution repositories. The default is the production organization.
 
 설치 계획을 검토한 다음 적용하고 검증하는 자세한 절차는 [INSTALL.md](INSTALL.md)를 참고하세요.
 

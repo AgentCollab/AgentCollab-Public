@@ -30,8 +30,9 @@ def package(kind: str, version: str, source_commit: str, setup: bytes = b"", con
             service_branch: str = "main") -> bytes:
     managed = {"deploy/setup.py": setup} if kind == "runtime" else {"execution/task.json": b"{}"}
     manifest = {
-        "product": "AgentCollab", "release_version": version,
-        "source": {"repository": "lkhkhk/AgentCollab", "commit": source_commit},
+        "schema_version": 2, "product": "AgentCollab", "release_version": version,
+        "package_version": "1.0.0",
+        "source_revision": {"commit": source_commit},
         "service_branch": service_branch, "execution_contract_version": contract,
         "managed_paths": list(managed), "files_sha256": {name: digest(data) for name, data in managed.items()},
     }
@@ -56,9 +57,9 @@ class BootstrapTests(unittest.TestCase):
         self.runtime_name = f"agentcollab-runtime-{self.version}.zip"
         self.execution_name = f"agentcollab-execution-{self.version}.zip"
         self.release = {
-            "schema_version": 1, "product": "AgentCollab", "channel": "beta",
+            "schema_version": 2, "product": "AgentCollab", "channel": "beta",
             "release_tag": self.version, "release_version": self.version,
-            "source": {"repository": "lkhkhk/AgentCollab", "commit": self.source_commit},
+            "source_revision": {"commit": self.source_commit},
             "service_branch": "main", "execution_contract_version": "1.0.0",
             "setup": {"package_path": "deploy/setup.py", "sha256": digest(self.setup_bytes)},
             "packages": {
@@ -91,8 +92,9 @@ class BootstrapTests(unittest.TestCase):
                        self.runtime_name: self.runtime, self.execution_name: self.execution}
         self.manifest_path = self.root / "installer-manifest.json"
         self.manifest_path.write_text(json.dumps({
-            "schema_version": 1, "protocol": "distribution-catalog-v1",
-            "public_repository": "AgentCollab/AgentCollab-Public",
+            "schema_version": 2, "protocol": "distribution-catalog-v1",
+            "public_repository": "example-org/AgentCollab-Public",
+            "distribution_repository": "example-org/AgentCollab-Distribution",
             "bootstrap": {"name": "agentcollab-bootstrap.py",
                           "sha256": digest((ROOT / "agentcollab-bootstrap.py").read_bytes())},
         }), encoding="utf-8")
@@ -107,7 +109,8 @@ class BootstrapTests(unittest.TestCase):
         self.runtime = package("runtime", self.version, self.source_commit, self.setup_bytes,
                                service_branch=service_branch)
         self.execution = package("execution", self.version, self.source_commit,
-                                 service_branch=service_branch)
+                                 service_branch=service_branch,
+                                 )
         self.release["packages"]["runtime"]["sha256"] = digest(self.runtime)
         self.release["packages"]["execution"]["sha256"] = digest(self.execution)
         self.release_raw = json_bytes(self.release)
@@ -183,8 +186,8 @@ class BootstrapTests(unittest.TestCase):
         evidence = json.loads(stderr)
         self.assertEqual({"kind": "default", "value": "default"}, evidence["requested_selector"])
         self.assertEqual(self.version, evidence["resolved_version"])
-        self.assertEqual(self.source_commit, evidence["source"]["commit"])
-        self.assertEqual("AgentCollab/AgentCollab-Distribution", evidence["distribution"]["repository"])
+        self.assertEqual(self.source_commit, evidence["source_revision"]["commit"])
+        self.assertEqual("example-org/AgentCollab-Distribution", evidence["distribution"]["repository"])
         self.assertEqual(self.version, evidence["distribution"]["release_tag"])
 
     def test_channel_selector_uses_only_requested_channel_pointer(self):
@@ -214,7 +217,7 @@ class BootstrapTests(unittest.TestCase):
         self.configure_kind_and_branch("candidate", "work/694-auto-web-port")
         result, stderr = self.run_bootstrap(["--version", self.version])
         self.assertEqual(0, result)
-        self.assertEqual("work/694-auto-web-port", json.loads(stderr)["source"]["service_branch"])
+        self.assertEqual("work/694-auto-web-port", json.loads(stderr)["service_branch"])
 
     def test_unsafe_candidate_service_branches_are_blocked(self):
         for branch in ("work/../bad", "work/@{bad}", "work//topic", "work/.hidden", "work/topic.lock"):
@@ -273,7 +276,7 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual("distribution-catalog", json.loads(stderr)["phase"])
 
         self.catalog["channels/default.json"] = json_bytes({
-            "schema_version": 1, "product": "AgentCollab", "channel": "beta",
+            "schema_version": 2, "product": "AgentCollab", "channel": "beta",
             "version": self.version, "version_record": self.pointer["version_record"],
         })
         self.command_calls.clear()
@@ -344,6 +347,14 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(2, result)
         self.assertEqual("package-verification", json.loads(stderr)["phase"])
 
+    def test_source_revision_is_exactly_bound_to_release_manifest(self):
+        mismatched_execution = package("execution", self.version, "a" * 40)
+        release = json.loads(json.dumps(self.release))
+        release["packages"]["execution"]["sha256"] = digest(mismatched_execution)
+        with self.assertRaises(bootstrap.BootstrapError) as raised:
+            bootstrap.verify_bundle(release, self.runtime, mismatched_execution)
+        self.assertEqual("package-verification", raised.exception.phase)
+
     def test_package_source_setup_and_runtime_execution_pair_are_bound_to_manifest(self):
         with self.assertRaises(bootstrap.BootstrapError):
             bootstrap.verify_bundle(self.release, self.runtime + b"tamper", self.execution)
@@ -365,9 +376,24 @@ class BootstrapTests(unittest.TestCase):
     def test_authenticated_catalog_reads_use_gh_api_not_anonymous_urls(self):
         result, _stderr = self.run_bootstrap()
         self.assertEqual(0, result)
-        self.assertTrue(all(call[:2] == ["gh", "api"] for call in self.command_calls
-                            if "/contents/" in " ".join(call)))
+        catalog_calls = [call for call in self.command_calls if "/contents/" in " ".join(call)]
+        self.assertTrue(all(call[:2] == ["gh", "api"] for call in catalog_calls))
+        self.assertTrue(catalog_calls)
+        self.assertTrue(all("repos/example-org/AgentCollab-Distribution/contents/" in " ".join(call)
+                            for call in catalog_calls))
         self.assertFalse(any("raw.githubusercontent.com" in " ".join(call) for call in self.command_calls))
+
+    def test_installer_manifest_selects_matching_environment_repositories(self):
+        metadata = json.loads(self.manifest_path.read_text(encoding="utf-8"))
+        bootstrap.validate_installer_manifest(metadata, (ROOT / "agentcollab-bootstrap.py").read_bytes())
+        self.assertEqual("example-org/AgentCollab-Public", metadata["public_repository"])
+        self.assertEqual("example-org/AgentCollab-Distribution", bootstrap.DISTRIBUTION_REPOSITORY)
+
+    def test_installer_manifest_rejects_mismatched_repository_owners(self):
+        metadata = json.loads(self.manifest_path.read_text(encoding="utf-8"))
+        metadata["distribution_repository"] = "different-org/AgentCollab-Distribution"
+        with self.assertRaises(bootstrap.BootstrapError):
+            bootstrap.validate_installer_manifest(metadata, (ROOT / "agentcollab-bootstrap.py").read_bytes())
 
     def test_explicit_web_port_is_forwarded_exactly(self):
         result, _stderr = self.run_bootstrap(["--web-port", "18123"])
@@ -385,8 +411,9 @@ class BootstrapTests(unittest.TestCase):
                              for path in ROOT.iterdir()))
 
     def test_generic_installer_metadata_rejects_mismatched_bootstrap_digest(self):
-        invalid = {"schema_version": 1, "protocol": "distribution-catalog-v1",
+        invalid = {"schema_version": 2, "protocol": "distribution-catalog-v1",
                    "public_repository": "AgentCollab/AgentCollab-Public",
+                   "distribution_repository": "AgentCollab/AgentCollab-Distribution",
                    "bootstrap": {"name": "agentcollab-bootstrap.py", "sha256": "0" * 64}}
         with self.assertRaises(bootstrap.BootstrapError):
             bootstrap.validate_installer_manifest(invalid, b"other bootstrap")

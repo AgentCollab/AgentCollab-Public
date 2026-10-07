@@ -2,12 +2,12 @@
 
 ## Public 저장소에 포함되는 항목
 
-`AgentCollab/AgentCollab-Public`은 공개 범용 설치 진입점입니다. 설치기, bootstrap, 설치 프로토콜, 관련 문서와 테스트를 포함합니다. 제품별 Runtime/Execution 패키지와 비공개 릴리스 자산을 포함하지 않습니다.
+Public 저장소는 공개 범용 설치 진입점입니다. 설치기, bootstrap, 설치 프로토콜, 관련 문서와 테스트를 포함합니다. 제품별 Runtime/Execution 패키지와 비공개 릴리스 자산을 포함하지 않습니다.
 
 ## 배포 및 소스 authority
 
-- **Distribution** (`AgentCollab/AgentCollab-Distribution`)은 제품 버전 카탈로그와 불변 Runtime/Execution 패키지, release manifest의 authority입니다. 이 저장소는 비공개이며 접근에는 인증과 읽기 권한이 필요합니다.
-- **Source** (`lkhkhk/AgentCollab`)는 제품 소스와 패키지 provenance의 authority입니다. Distribution 패키지는 정확한 Source 저장소와 commit을 출처로 기록합니다.
+- **Distribution** 저장소는 제품 버전 카탈로그와 불변 Runtime/Execution 패키지, release manifest의 authority입니다. 이 저장소는 비공개이며 접근에는 인증과 읽기 권한이 필요합니다. 두 저장소의 owner는 각 환경의 `installer-manifest.json`에 설정합니다.
+- **Source**는 제품 소스와 패키지 provenance의 authority입니다. Distribution release manifest와 Runtime/Execution 패키지는 Source 저장소와 commit을 기록하며, Public 설치기는 인증된 release manifest의 provenance 형식을 확인하고 두 패키지와 정확히 일치하는지 검증합니다. 설치기는 특정 Source 저장소 이름을 고정하지 않습니다.
 - **Public**은 범용 설치 프로토콜을 제공하며 특정 제품 버전이나 패키지를 authority로 정하지 않습니다.
 
 ## 버전 경계

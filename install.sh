@@ -1,8 +1,6 @@
 #!/bin/sh
 set -eu
 
-PUBLIC_REPOSITORY='AgentCollab/AgentCollab-Public'
-
 fail() { printf '%s\n' "AgentCollab installer: $1" >&2; exit 2; }
 command -v python3 >/dev/null 2>&1 || fail 'Python 3 is required.'
 command -v git >/dev/null 2>&1 || fail 'Git is required; run install.sh from a Public repository checkout.'

@@ -16,9 +16,7 @@ import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath
 
-PUBLIC_REPOSITORY = "AgentCollab/AgentCollab-Public"
-DISTRIBUTION_REPOSITORY = "AgentCollab/AgentCollab-Distribution"
-SOURCE_REPOSITORY = "lkhkhk/AgentCollab"
+DISTRIBUTION_REPOSITORY = ""
 INSTALLER_PROTOCOL = "distribution-catalog-v1"
 VERSION_PATTERN = re.compile(r"[0-9A-Za-z][0-9A-Za-z._+-]{0,63}")
 SERVICE_BRANCH_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*[A-Za-z0-9_]")
@@ -50,17 +48,33 @@ def _asset_name(value: object) -> bool:
             and value not in {".", ".."} and "/" not in value and "\\" not in value)
 
 
+def _repository_owner(value: object, expected_name: str) -> str | None:
+    if not isinstance(value, str) or value.count("/") != 1:
+        return None
+    owner, name = value.split("/", 1)
+    if (name != expected_name or not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?", owner)):
+        return None
+    return owner
+
+
 def validate_installer_manifest(manifest: object, bootstrap_bytes: bytes) -> dict:
-    if (not isinstance(manifest, dict) or manifest.get("schema_version") != 1
+    if (not isinstance(manifest, dict) or manifest.get("schema_version") != 2
             or manifest.get("protocol") != INSTALLER_PROTOCOL
-            or manifest.get("public_repository") != PUBLIC_REPOSITORY
-            or set(manifest) != {"schema_version", "protocol", "public_repository", "bootstrap"}):
+            or set(manifest) != {"schema_version", "protocol", "public_repository",
+                                 "distribution_repository", "bootstrap"}):
         raise BootstrapError("BLOCKED", "installer-identity", "Generic Public installer metadata is invalid.")
+    public_owner = _repository_owner(manifest.get("public_repository"), "AgentCollab-Public")
+    distribution_owner = _repository_owner(manifest.get("distribution_repository"), "AgentCollab-Distribution")
+    if not public_owner or public_owner != distribution_owner:
+        raise BootstrapError("BLOCKED", "installer-identity",
+                             "Public and Distribution repository identities must use the same valid organization.")
     bootstrap = manifest.get("bootstrap")
     if (not isinstance(bootstrap, dict) or set(bootstrap) != {"name", "sha256"}
             or bootstrap.get("name") != "agentcollab-bootstrap.py"
             or not _digest(bootstrap.get("sha256")) or _sha256(bootstrap_bytes) != bootstrap["sha256"]):
         raise BootstrapError("BLOCKED", "installer-identity", "Public bootstrap does not match its checked-in identity digest.")
+    global DISTRIBUTION_REPOSITORY
+    DISTRIBUTION_REPOSITORY = manifest["distribution_repository"]
     return manifest
 
 
@@ -191,12 +205,13 @@ def _read_zip(raw: bytes, kind: str, release: dict) -> tuple[dict, bytes]:
     except (OSError, KeyError, TypeError, ValueError, zipfile.BadZipFile, json.JSONDecodeError) as error:
         raise BootstrapError("BLOCKED", "package-verification",
                              f"{kind.title()} package provenance or managed-file verification failed.") from error
-    expected_source = release["source"]
+    expected_source = release["source_revision"]
     expected_release = release["release_tag"]
     if (package_manifest.get("product") != "AgentCollab"
             or package_manifest.get("release_version") != expected_release
-            or package_manifest.get("source") != {
-                "repository": expected_source["repository"], "commit": expected_source["commit"]}
+            or "source" in package_manifest
+            or package_manifest.get("schema_version") != 2
+            or package_manifest.get("source_revision") != expected_source
             or package_manifest.get("service_branch") != release["service_branch"]):
         raise BootstrapError("BLOCKED", "package-verification", f"{kind.title()} package source provenance mismatch.")
     if kind == "runtime" and _sha256(setup_bytes) != release["setup"]["sha256"]:
@@ -212,16 +227,18 @@ def validate_release_manifest(version_record: dict, release_manifest_raw: bytes,
         release = json.loads(release_manifest_raw)
     except (UnicodeError, json.JSONDecodeError) as error:
         raise BootstrapError("BLOCKED", "release-verification", "Private release manifest is invalid.") from error
-    source = release.get("source") if isinstance(release, dict) else None
+    source_revision = release.get("source_revision") if isinstance(release, dict) else None
     packages = release.get("packages") if isinstance(release, dict) else None
     setup = release.get("setup") if isinstance(release, dict) else None
     version = version_record["version"]
-    if (not isinstance(release, dict) or release.get("schema_version") != 1
+    if (not isinstance(release, dict) or release.get("schema_version") != 2
+            or "source" in release
             or release.get("product") != "AgentCollab"
             or not isinstance(release.get("channel"), str) or release.get("channel") not in {"beta", "stable"}
             or release.get("release_tag") != version or release.get("release_version") != version
-            or not isinstance(source, dict) or source.get("repository") != SOURCE_REPOSITORY
-            or not re.fullmatch(r"[0-9a-f]{40}", str(source.get("commit", "")))
+            or not isinstance(source_revision, dict) or set(source_revision) != {"commit"}
+            or not re.fullmatch(r"[0-9a-f]{40}", str(source_revision.get("commit", "")))
+            or not isinstance(release.get("source_revision"), dict)
             or not isinstance(release.get("service_branch"), str)
             or not isinstance(setup, dict) or setup.get("package_path") != SETUP_PATH
             or not _digest(setup.get("sha256")) or not isinstance(release.get("execution_contract_version"), str)
@@ -252,7 +269,7 @@ def verify_bundle(release: dict, runtime_raw: bytes,
                   execution_raw: bytes) -> tuple[dict, dict, bytes]:
     runtime, setup_bytes = _read_zip(runtime_raw, "runtime", release)
     execution, _ = _read_zip(execution_raw, "execution", release)
-    pair_fields = ("release_version", "execution_contract_version", "source", "service_branch")
+    pair_fields = ("release_version", "execution_contract_version", "source_revision", "service_branch")
     if any(runtime.get(field) != execution.get(field) for field in pair_fields):
         raise BootstrapError("BLOCKED", "package-verification", "Runtime and Execution packages are not a compatible release pair.")
     if runtime.get("execution_contract_version") != release.get("execution_contract_version"):
@@ -430,7 +447,8 @@ def run_bootstrap(argv=None, *, command_fn=_run, which=shutil.which,
                     "version_record_sha256": version_record_sha256,
                     "release_manifest": version_record["release_manifest"],
                 },
-                "source": {**release["source"], "service_branch": release["service_branch"]},
+                "source_revision": release["source_revision"],
+                "service_branch": release["service_branch"],
             }, sort_keys=True), file=sys.stderr)
             result = runner(setup_args, check=False, cwd=runtime_root, env=environment)
             return int(getattr(result, "returncode", 2))

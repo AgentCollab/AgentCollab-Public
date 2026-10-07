@@ -1,9 +1,10 @@
 {
-  "schema_version": 1,
-  "protocol": "distribution-catalog-v1",
-  "public_repository": "AgentCollab/AgentCollab-Public",
   "bootstrap": {
     "name": "agentcollab-bootstrap.py",
-    "sha256": "69e78679cb5902d9e12a80bede06e28763310ed86528bd9110d5ebb50229fc58"
-  }
+    "sha256": "afcd7abf646a69b74f2708612e10d0ed36ad1e60eec3fe1057b499fe940a8f9b"
+  },
+  "protocol": "distribution-catalog-v1",
+  "public_repository": "AgentCollab/AgentCollab-Public",
+  "schema_version": 2,
+  "distribution_repository": "AgentCollab/AgentCollab-Distribution"
 }
