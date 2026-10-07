@@ -22,6 +22,18 @@ gh auth login
 
 Set `AGENTCOLLAB_GITHUB_OWNER` to the organization that owns the environment's Public and Distribution repositories. The default is the production organization.
 
+The installer checkout and installed product are separate sibling directories:
+
+```text
+<workspace>/
+├─ AgentCollab-Public/  # installer checkout; safe to update or reclone
+└─ agentcollab/         # installed product authority
+   ├─ RUN/              # Runtime and persistent DATA
+   └─ runner/           # managed self-hosted runner
+```
+
+By default, PLAN/APPLY/VERIFY use `<parent-of-Public-checkout>/agentcollab`, regardless of the shell's current directory. Use the same `--installation-root` and, if supplied, `--runner-root` on every phase to override those paths. The installation root contains Runtime, DATA, and the runner; deleting it is not an installer cleanup or uninstall operation.
+
 설치 계획을 검토한 다음 적용하고 검증하는 자세한 절차는 [INSTALL.md](INSTALL.md)를 참고하세요.
 
 설치기는 저장소, 버전, 패키지 출처 또는 권한을 확인할 수 없으면 진행을 차단합니다. 차단을 우회하거나 다른 버전으로 자동 전환하지 않습니다.

@@ -21,16 +21,28 @@ gh auth login
 
 `AGENTCOLLAB_GITHUB_OWNER`는 Public 및 Distribution 저장소를 소유한 환경 조직으로 설정합니다. 지정하지 않으면 운영 조직을 기본값으로 사용합니다.
 
-설치기는 Public 체크아웃 경로를 통해 호출할 수 있습니다. 기본 설치 위치는 Public 저장소 위치와 무관하게 **명령을 실행한 현재 작업 디렉터리 아래의 `agentcollab/`**입니다.
+설치기는 Public 체크아웃 경로를 통해 호출할 수 있습니다. 기본 설치 위치는 현재 셸의 작업 디렉터리가 아니라 **Public 체크아웃의 부모에 있는 `agentcollab/`**입니다. 따라서 README Quick Start처럼 Public 저장소 안으로 이동해 실행해도 installer와 설치 본체가 형제 디렉터리로 유지됩니다.
 
-예를 들어 현재 위치가 `/srv/agentcollab-user`라면 다음처럼 실행할 수 있습니다.
+예를 들어 `/srv/agentcollab-user`에 Public 저장소를 clone했다면 다음 두 방식 모두 같은 설치 위치를 사용합니다.
 
 ```sh
-cd /srv/agentcollab-user
+cd /srv/agentcollab-user/AgentCollab-Public
+./install.sh plan
+# 또는 /srv/agentcollab-user 에서:
 ./AgentCollab-Public/install.sh plan
 ```
 
-이 경우 기본 설치 위치는 `/srv/agentcollab-user/agentcollab`입니다. 다른 위치가 필요하면 `--installation-root <path>`를 지정하세요.
+기본 설치 위치는 `/srv/agentcollab-user/agentcollab`이고 기본 runner 위치는 `/srv/agentcollab-user/agentcollab/runner`입니다. 다른 위치가 필요하면 `--installation-root <path>` 또는 `--runner-root <path>`를 지정하세요. 명시적 root는 Public checkout 기준 기본값보다 우선합니다.
+
+```text
+/srv/agentcollab-user/
+├─ AgentCollab-Public/  # installer/update entrypoint
+└─ agentcollab/         # installed product authority
+   ├─ RUN/              # Runtime, DATA, and service logs
+   └─ runner/           # managed self-hosted runner
+```
+
+Public 체크아웃은 설치 프로그램을 업데이트하거나 다시 clone할 때 사용하는 디렉터리입니다. `agentcollab/`에는 설치된 Runtime, persistent DATA, 서비스 설정, runner가 있으므로 checkout 정리 목적으로 삭제하지 마세요. 현재 Public installer는 자동 uninstall 단계를 제공하지 않습니다.
 
 ## 설치 계획 만들기: PLAN
 
@@ -40,7 +52,7 @@ cd /srv/agentcollab-user
 ./AgentCollab-Public/install.sh plan
 ```
 
-설치기는 선택된 배포 버전, Source 출처, 패키지 확인 결과, 설치 위치와 필요한 작업을 보여 줍니다. 실제 적용 전에 결과의 `resolved_version`과 `plan_sha256`을 기록하고 전체 계획을 검토하세요.
+PLAN은 앞부분에 Installer checkout, Installation root, Runner root, Execution repo, Web port를 요약하고 이어서 선택된 배포 버전, Source 출처, 패키지 확인 결과, 필요한 작업을 보여 줍니다. 실제 적용 전에 결과의 `resolved_version`과 `plan_sha256`을 기록하고 전체 계획을 검토하세요. 승인 digest는 실제 installation root와 runner root를 포함합니다.
 
 ### 버전 선택자
 
@@ -71,10 +83,12 @@ cd /srv/agentcollab-user
 
 적용 전에 다음 항목을 확인하세요.
 
+- Installer checkout과 설치 본체가 형제 디렉터리인지
+- Installation root와 Runner root가 의도한 위치인지
+- Execution repo와 Web port가 의도한 값인지
 - 요청한 선택자와 `resolved_version`이 의도와 일치하는지
 - Source 저장소, commit SHA, service branch가 올바른지
 - Runtime, Execution, release manifest의 검증이 통과했는지
-- 설치 root와 Web 포트가 의도한 값인지
 - PLAN의 모든 작업과 `plan_sha256`
 
 설치기는 version record, release manifest, 패키지 해시와 Source provenance를 서로 대조합니다. 확인이 실패하면 fail-closed 방식으로 차단합니다.
@@ -89,7 +103,7 @@ PLAN 결과를 검토한 뒤, **같은 정확한 버전과 해당 PLAN의 SHA**�
   --approved-plan-sha256 PLAN_SHA256
 ```
 
-`VERSION`에는 PLAN에서 확인한 정확한 `resolved_version`을, `PLAN_SHA256`에는 같은 PLAN의 `plan_sha256`을 입력하세요. 계획을 다시 만들거나 호스트 상태가 바뀌면 새 PLAN을 검토해야 합니다. APPLY 중에는 승인된 계획과 달라진 상태를 자동으로 보정하거나 다른 포트를 선택하지 않습니다.
+`VERSION`에는 PLAN에서 확인한 정확한 `resolved_version`을, `PLAN_SHA256`에는 같은 PLAN의 `plan_sha256`을 입력하세요. 명시적 `--installation-root` 또는 `--runner-root`를 PLAN에 사용했다면 APPLY와 VERIFY에도 같은 값을 전달해야 합니다. 기본값을 쓴 경우에는 같은 Public checkout에서 실행하면 세 단계가 같은 경로를 계산합니다. 계획을 다시 만들거나 호스트 상태가 바뀌면 새 PLAN을 검토해야 합니다. APPLY 중에는 승인된 계획과 달라진 상태를 자동으로 보정하거나 다른 포트를 선택하지 않습니다.
 
 ## 설치 검증: VERIFY
 
@@ -98,6 +112,12 @@ APPLY가 성공하면 동일한 정확한 버전을 사용해 설치 상태를 �
 ```sh
 ./AgentCollab-Public/install.sh verify --version VERSION
 ```
+
+## 업데이트와 제거
+
+업데이트는 기존 `AgentCollab-Public` 체크아웃에서 새 PLAN을 검토하고 같은 installation/runner root를 사용해 APPLY한 뒤 VERIFY합니다. Public checkout을 갱신하거나 다시 clone해도 형제 `agentcollab/` 설치는 자동 이동·삭제되지 않습니다.
+
+Public installer에는 자동 제거 명령이 없습니다. `agentcollab/`는 Runtime, DATA, 서비스 설정, runner를 포함하는 설치 본체이므로 삭제 전에 DATA 보존 및 서비스/runner 해제를 별도로 계획해야 합니다. Public checkout만 삭제해도 설치 본체는 제거되지 않습니다.
 
 ## Web 포트
 
