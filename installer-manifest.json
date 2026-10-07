@@ -1,7 +1,7 @@
 {
   "bootstrap": {
     "name": "agentcollab-bootstrap.py",
-    "sha256": "2beaba11a405e599967bdc879c0fab83f1bed165a4268d77d66c627590d75b5a"
+    "sha256": "64de0d8ef49d37ecd1947662d563fb873ed89b841b8123425e45f85770b47511"
   },
   "protocol": "distribution-catalog-v1",
   "public_repository": "AgentCollab/AgentCollab-Public",

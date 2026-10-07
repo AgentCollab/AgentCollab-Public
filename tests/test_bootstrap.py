@@ -423,6 +423,10 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual("example-org/AgentCollab-Public", metadata["public_repository"])
         self.assertEqual("example-org/AgentCollab-Distribution", bootstrap.DISTRIBUTION_REPOSITORY)
 
+    def test_checked_in_installer_manifest_matches_bootstrap_digest(self):
+        metadata = json.loads((ROOT / "installer-manifest.json").read_text(encoding="utf-8"))
+        bootstrap.validate_installer_manifest(metadata, (ROOT / "agentcollab-bootstrap.py").read_bytes())
+
     def test_installer_manifest_rejects_mismatched_repository_owners(self):
         metadata = json.loads(self.manifest_path.read_text(encoding="utf-8"))
         metadata["distribution_repository"] = "different-org/AgentCollab-Distribution"
