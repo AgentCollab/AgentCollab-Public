@@ -165,13 +165,15 @@ class BootstrapTests(unittest.TestCase):
     def run_bootstrap(self, extra=(), *, cwd=None, runner=None, phase="plan"):
         args = [phase, "--manifest", str(self.manifest_path), *extra]
         stderr = io.StringIO()
-        with contextlib.redirect_stderr(stderr):
+        stdout = io.StringIO()
+        with contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(stdout):
             result = bootstrap.run_bootstrap(args, command_fn=self.command,
                 which=lambda _name: "/usr/bin/gh", setup_command_fn=runner or self.setup_runner,
                 cwd=cwd or self.root)
+        self.last_stdout = stdout.getvalue()
         return result, stderr.getvalue()
 
-    def test_default_selector_uses_authenticated_default_pointer_and_current_directory_root(self):
+    def test_default_selector_uses_public_checkout_sibling_root_independent_of_pwd(self):
         work = self.root / "work"
         result, stderr = self.run_bootstrap(cwd=work)
         self.assertEqual(0, result)
@@ -180,15 +182,47 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(["channels/default.json", f"versions/{self.version}.json"], catalog_calls)
         self.assertLess(self.command_calls.index(["gh", "auth", "status", "--hostname", "github.com"]),
                         next(i for i, call in enumerate(self.command_calls) if call[:2] == ["gh", "api"]))
-        self.assertIn(str(work / "agentcollab"), self.capture["argv"])
+        expected_root = Path(bootstrap.__file__).resolve().parent.parent / "agentcollab"
+        self.assertIn(str(expected_root), self.capture["argv"])
         self.assertNotIn("--web-port", self.capture["argv"])
-        self.assertFalse((work / "agentcollab").exists())
+        self.assertFalse(expected_root.exists())
         evidence = json.loads(stderr)
         self.assertEqual({"kind": "default", "value": "default"}, evidence["requested_selector"])
         self.assertEqual(self.version, evidence["resolved_version"])
         self.assertEqual(self.source_commit, evidence["source_revision"]["commit"])
         self.assertEqual("example-org/AgentCollab-Distribution", evidence["distribution"]["repository"])
         self.assertEqual(self.version, evidence["distribution"]["release_tag"])
+
+    def test_explicit_installation_root_overrides_public_checkout_default(self):
+        requested = self.root / "chosen-installation"
+        result, _stderr = self.run_bootstrap(["--installation-root", str(requested)])
+        self.assertEqual(0, result)
+        self.assertIn(str(requested.resolve()), self.capture["argv"])
+        self.assertFalse(requested.exists(), "PLAN must not create the selected installation root")
+
+    def test_plan_prints_resolved_user_path_summary_before_plan_json(self):
+        plan = {
+            "status": "PLAN_READY",
+            "installation_root": "/workspace/agentcollab",
+            "runner_root": "/workspace/agentcollab/runner",
+            "execution_repository": "user/AgentCollab-Execution",
+            "web_port": 8123,
+        }
+
+        def runner(argv, **kwargs):
+            self.setup_runner(argv, **kwargs)
+            return SimpleNamespace(returncode=0, stdout=json.dumps(plan), stderr="")
+
+        result, _stderr = self.run_bootstrap(runner=runner)
+        self.assertEqual(0, result)
+        lines = self.last_stdout.splitlines()
+        self.assertEqual("AgentCollab installation plan", lines[0])
+        self.assertIn(f"Installer checkout: {Path(bootstrap.__file__).resolve().parent}", lines[1])
+        self.assertIn("Installation root:  /workspace/agentcollab", lines[2])
+        self.assertIn("Runner root:        /workspace/agentcollab/runner", lines[3])
+        self.assertIn("Execution repo:     user/AgentCollab-Execution", lines[4])
+        self.assertIn("Web port:           8123", lines[5])
+        self.assertEqual(json.loads("\n".join(lines[6:]))["status"], "PLAN_READY")
 
     def test_channel_selector_uses_only_requested_channel_pointer(self):
         result, stderr = self.run_bootstrap(["--channel", "beta"])
@@ -388,6 +422,10 @@ class BootstrapTests(unittest.TestCase):
         bootstrap.validate_installer_manifest(metadata, (ROOT / "agentcollab-bootstrap.py").read_bytes())
         self.assertEqual("example-org/AgentCollab-Public", metadata["public_repository"])
         self.assertEqual("example-org/AgentCollab-Distribution", bootstrap.DISTRIBUTION_REPOSITORY)
+
+    def test_checked_in_installer_manifest_matches_bootstrap_digest(self):
+        metadata = json.loads((ROOT / "installer-manifest.json").read_text(encoding="utf-8"))
+        bootstrap.validate_installer_manifest(metadata, (ROOT / "agentcollab-bootstrap.py").read_bytes())
 
     def test_installer_manifest_rejects_mismatched_repository_owners(self):
         metadata = json.loads(self.manifest_path.read_text(encoding="utf-8"))

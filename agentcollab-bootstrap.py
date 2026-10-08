@@ -363,7 +363,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", help="exact immutable Distribution version")
     parser.add_argument("--channel", help="Distribution channel pointer: default, beta, or stable")
     parser.add_argument("--installation-root", type=Path,
-                        help="personal installation root (default: ./agentcollab from the current directory)")
+                        help="personal installation root (default: a sibling agentcollab directory next to this Public checkout)")
     parser.add_argument("--control-repository", help="existing personal Execution repository to reuse")
     parser.add_argument("--web-port", type=int, help="explicit Web port (omitted preserves automatic port selection)")
     parser.add_argument("--service-name", default="agentcollab-web.service")
@@ -398,8 +398,13 @@ def run_bootstrap(argv=None, *, command_fn=_run, which=shutil.which,
         require_github_auth(command_fn, which)
         version, version_record, requested_selector, version_record_sha256 = resolve_version(
             requested_version=args.version, requested_channel=args.channel, run=command_fn)
-        installation_root = (args.installation_root.expanduser().resolve(strict=False) if args.installation_root
-                             else ((cwd or Path.cwd()) / "agentcollab").resolve(strict=False))
+        installer_checkout = Path(__file__).resolve().parent
+        installation_root = (args.installation_root.expanduser() if args.installation_root
+                             else installer_checkout.parent / "agentcollab")
+        if installation_root.is_symlink():
+            raise BootstrapError("BLOCKED", "installation-root",
+                                 "Installation root is a symbolic link; refusing to adopt it.")
+        installation_root = installation_root.resolve(strict=False)
         with tempfile.TemporaryDirectory(prefix="agentcollab-private-packages-") as temporary:
             download_dir = Path(temporary)
             release_raw = _download_release_manifest(version_record, download_dir, command_fn)
@@ -450,7 +455,38 @@ def run_bootstrap(argv=None, *, command_fn=_run, which=shutil.which,
                 "source_revision": release["source_revision"],
                 "service_branch": release["service_branch"],
             }, sort_keys=True), file=sys.stderr)
-            result = runner(setup_args, check=False, cwd=runtime_root, env=environment)
+            if args.phase == "plan":
+                result = runner(setup_args, check=False, cwd=runtime_root, env=environment,
+                                capture_output=True, text=True)
+                setup_stdout = getattr(result, "stdout", None)
+                if isinstance(setup_stdout, str) and setup_stdout.strip():
+                    try:
+                        setup_plan = json.loads(setup_stdout)
+                    except json.JSONDecodeError:
+                        setup_plan = None
+                    if isinstance(setup_plan, dict):
+                        runner_root = setup_plan.get("runner_root")
+                        if not runner_root:
+                            guidance = setup_plan.get("runner_registration_guidance", {})
+                            if isinstance(guidance, dict):
+                                runner_root = guidance.get("runner_root")
+                        web_port = setup_plan.get("web_port")
+                        if web_port is None:
+                            port_target = next((step.get("target", "") for step in setup_plan.get("steps", [])
+                                                if str(step.get("target", "")).startswith("TCP port ")), "")
+                            web_port = port_target.removeprefix("TCP port ") or "unavailable"
+                        print("AgentCollab installation plan")
+                        print(f"Installer checkout: {installer_checkout}")
+                        print(f"Installation root:  {setup_plan.get('installation_root', installation_root)}")
+                        print(f"Runner root:        {runner_root or 'unavailable'}")
+                        print(f"Execution repo:     {setup_plan.get('execution_repository', 'unavailable')}")
+                        print(f"Web port:           {web_port}")
+                    sys.stdout.write(setup_stdout)
+                setup_stderr = getattr(result, "stderr", None)
+                if isinstance(setup_stderr, str) and setup_stderr:
+                    sys.stderr.write(setup_stderr)
+            else:
+                result = runner(setup_args, check=False, cwd=runtime_root, env=environment)
             return int(getattr(result, "returncode", 2))
     except BootstrapError as error:
         payload = {"status": error.status, "phase": error.phase, "reason": error.reason}
