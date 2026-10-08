@@ -4,10 +4,22 @@
 
 ## 사전 준비
 
-- 지원되는 Linux 환경과 `git`, Python 3, GitHub CLI(`gh`)가 필요합니다.
-- `gh auth login`으로 GitHub에 인증하세요.
-- 인증한 GitHub 계정은 현재 Public 저장소의 installer manifest가 지정하는 비공개 Distribution 저장소를 읽을 권한이 있어야 합니다.
-- 설치기는 Distribution 카탈로그와 선택된 릴리스 자산을 인증된 방식으로 읽습니다.
+- 현재 설치 경로는 Linux를 대상으로 합니다. 문서화된 테스트 배포판/버전 목록은 없습니다. native Windows, WSL2, macOS와 특정 Linux 배포판/버전의 지원은 확인되지 않았으므로 지원된다고 가정하지 마세요.
+- `git`, Python 3, GitHub CLI(`gh`), `jq`, Codex CLI, Antigravity CLI(`agy`), systemd user service가 동작하는 사용자 로그인 세션이 필요합니다. Codex CLI 로그인, sandbox 및 AppArmor readiness도 필요합니다. `agy`, Codex, `jq`는 interactive shell뿐 아니라 runner job PATH에서도 실행 가능해야 합니다.
+- PLAN/APPLY/VERIFY를 같은 사용자로 실행하고 APPLY에는 interactive terminal을 사용하세요. Web과 기본 runner service는 사용자 계정의 systemd service로 설정합니다. 일부 host prerequisite가 부족하면 PLAN이 별도의 관리자 조치를 표시할 수 있습니다. Web UI를 사용할 때 브라우저가 필요합니다.
+- GitHub CLI에서 `gh auth login`으로 인증하세요. 인증 계정은 Public 저장소와 installer manifest가 지정하는 private Distribution 저장소를 읽을 수 있어야 합니다. 또한 PLAN에서 표시되는 개인 Execution repository와 Actions 변경을 수행할 권한이 필요합니다.
+- 설치기는 Distribution 카탈로그와 선택된 릴리스 자산을 인증된 방식으로 읽습니다. PLAN은 현재 인증 권한을 검사하고 필요한 경우 승인 가능한 `gh auth refresh` 명령을 표시합니다. 권한을 변경한 뒤 PLAN을 다시 실행하세요.
+
+### APPLY 전에 준비할 credential
+
+APPLY는 Web 관리자 비밀번호와 GitHub credential 역할을 확인하고, 값이 아직 없으면 interactive terminal에서 입력을 받습니다. 비밀번호/PAT는 입력 중 화면에 표시되지 않습니다.
+
+- **Web 관리자 비밀번호**: Web UI의 관리자 모드로 전환할 때 쓰는 별도 비밀번호입니다. 설치 시 만들며 GitHub PAT와 달라야 합니다.
+- **CONTROL_TOKEN / TASK_REPO_TOKEN**: private control/Execution 및 TASK 저장소 작업을 위한 classic GitHub PAT입니다. 현재 지원 경로에서 기본 scope는 `repo`입니다. PLAN이 Execution workflow 파일을 쓰는 경우에는 인증 계정에 `workflow` scope도 필요하다고 안내할 수 있습니다.
+- **AGENTCOLLAB_ORCHESTRATION_TOKEN**: exact workflow dispatch를 위해 쓰는 별도의 classic PAT입니다. 현재 구현은 `repo` scope를 검사합니다. repository credential과 같은 값을 재사용하지 마세요.
+- 설치기는 필요한 runtime credential 일부를 local profile에 저장하고, Web 관리자 및 TASK repo credential을 대상 GitHub Actions secret으로 동기화합니다. 값은 출력하지 않습니다. local 설치 저장과 GitHub Actions 저장은 별도 위치입니다.
+
+PAT 권한은 본인이 소유/관리하는 대상 저장소와 필요한 작업 범위로 제한하세요. PLAN이 요구하는 추가 scope나 저장소 권한을 임의로 추측하지 말고 PLAN 결과를 따르세요. credential을 shell 인자, 명령 기록, Issue, 채팅 또는 로그에 붙여넣지 마세요. APPLY의 비밀 입력 프롬프트에만 입력하고 출력 공유 전에는 민감값이 없는지 확인하세요.
 
 ## Public 저장소 준비
 
@@ -113,11 +125,17 @@ APPLY가 성공하면 동일한 정확한 버전을 사용해 설치 상태를 �
 ./AgentCollab-Public/install.sh verify --version VERSION
 ```
 
+VERIFY 결과에서 선택된 Web port, Web service/health, runner 상태와 전체 readiness를 확인하세요. Web 화면은 같은 컴퓨터의 브라우저에서 `http://127.0.0.1:<확인한 Web port>/`로 엽니다. 기본 화면은 일반 사용자 모드이며, TASK 사용은 일반 사용자 권한 범위로 제한됩니다. 관리자 작업이 필요할 때만 화면의 관리자 비밀번호 입력란에 APPLY 때 설정한 Web 관리자 비밀번호를 입력해 관리자 모드로 전환하세요. 일반 사용자와 관리자는 별도 GitHub 로그인 계정이 아니라 Web 권한 모드입니다.
+
+첫 실행은 Web UI에서 첫 TASK를 만들고 표시되는 readiness를 확인하는 것입니다. 필수 Execution 저장소, workflow, Actions credential 또는 runner 상태가 준비되지 않았다면 TASK 시작을 반복하지 말고 아래 문제 해결 안내에서 먼저 해당 readiness 원인을 해결하세요. 설치가 READY라는 사실만으로 외부 TASK workflow의 성공까지 보장되지는 않습니다.
+
 ## 업데이트와 제거
 
-업데이트는 기존 `AgentCollab-Public` 체크아웃에서 새 PLAN을 검토하고 같은 installation/runner root를 사용해 APPLY한 뒤 VERIFY합니다. Public checkout을 갱신하거나 다시 clone해도 형제 `agentcollab/` 설치는 자동 이동·삭제되지 않습니다.
+현재 버전은 PLAN 또는 VERIFY 출력의 `resolved_version`에서 확인합니다. 새 버전은 배포된 Distribution channel 또는 확인한 정확한 버전으로 선택합니다. 업데이트는 기존 `AgentCollab-Public` 체크아웃에서 새 PLAN을 검토하고 같은 installation/runner root를 사용해 APPLY한 뒤 VERIFY합니다. Public checkout을 갱신하거나 다시 clone해도 형제 `agentcollab/` 설치는 자동 이동·삭제되지 않습니다. Runtime 업데이트를 되돌리는 별도 자동 rollback 명령은 제공되지 않습니다. 이전 버전 재적용을 rollback으로 간주하지 마세요. 버전 간 DATA/profile 호환성이 보장된다는 근거가 없으므로 복구가 필요하면 먼저 운영자 지원을 요청하세요.
 
 Public installer에는 자동 제거 명령이 없습니다. `agentcollab/`는 Runtime, DATA, 서비스 설정, runner를 포함하는 설치 본체이므로 삭제 전에 DATA 보존 및 서비스/runner 해제를 별도로 계획해야 합니다. Public checkout만 삭제해도 설치 본체는 제거되지 않습니다.
+
+수동 제거를 진행한다면 먼저 PLAN/VERIFY 출력과 실제 service/runner 경로를 대조하고, DATA를 별도 안전한 위치에 백업했는지 확인하세요. 그 다음 해당 설치가 소유한 user Web service와 runner를 명시적으로 중지·해제하고 runner 등록 해제를 확인한 뒤, DATA를 보존할지 삭제할지 결정하세요. 관리 대상임을 확인할 수 없는 service/runner는 중지·삭제하지 마세요. 현재 Public installer는 자동화된 완전 제거·복구 절차를 제공하지 않으므로 서비스/runner 해제 방법이 분명하지 않으면 설치 폴더를 지우지 말고 [문제 해결 및 운영](TROUBLESHOOTING.md)에서 지원을 요청하세요.
 
 ## Web 포트
 
@@ -134,3 +152,5 @@ Public installer에는 자동 제거 명령이 없습니다. `agentcollab/`는 R
 ## 차단된 경우
 
 차단 결과는 인증·권한, 카탈로그, 버전·패키지 provenance, 포트 소유 관계 또는 호스트 상태 확인이 실패했음을 뜻할 수 있습니다. 오류와 PLAN 증거를 보존하고 first-cause를 확인하세요. 검증을 우회하거나, 승인된 버전을 바꾸거나, 기존 프로세스를 임의로 종료하지 마세요. 호스트 상태나 선택자를 바꾼 뒤 진행하려면 새 PLAN을 만들고 다시 검토해야 합니다.
+
+원인별 확인 순서와 업데이트·credential 복구·수동 제거의 제한은 [문제 해결 및 운영](TROUBLESHOOTING.md)을 참고하세요. 설치기 버전과 공개 변경 내역은 [GitHub Releases](https://github.com/AgentCollab/AgentCollab-Public/releases)에서 확인할 수 있고, 문의는 [GitHub Issues](https://github.com/AgentCollab/AgentCollab-Public/issues)에 남길 수 있습니다. 로그를 올릴 때 token, 비밀번호, private URL/query, profile 내용은 제거하세요.

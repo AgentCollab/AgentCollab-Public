@@ -10,13 +10,16 @@ AgentCollab Public Installer는 AgentCollab을 설치하고 검증하기 위한 
 
 ## 시작하기
 
-Git과 GitHub CLI(`gh`)가 필요합니다. GitHub CLI에서 로그인한 계정은 비공개 Distribution 저장소를 읽을 수 있어야 합니다.
+설치는 현재 **Linux 환경**을 대상으로 합니다. 검증된 배포판/버전 범위가 문서화되어 있지 않으므로 특정 배포판 버전이나 native Windows, WSL2, macOS 지원을 보장하지 않습니다. 설치에는 Git, Python 3, GitHub CLI(`gh`), `jq`, Codex CLI와 로그인, Codex sandbox/AppArmor readiness, Antigravity CLI(`agy`), systemd user service가 동작하는 로그인 세션, 그리고 APPLY 중 비밀값을 입력할 수 있는 interactive terminal이 필요합니다. Codex/Antigravity runner 실행 환경에도 해당 CLI가 PATH에 있어야 합니다. 준비 사항과 제한은 [설치 안내](INSTALL.md#사전-준비)를 확인하세요.
+
+브라우저는 설치에는 필요하지 않지만 설치 후 Web UI를 열 때 필요합니다. Web과 기본 runner service는 사용자 계정의 systemd service로 설정합니다. 일부 host prerequisite가 부족하면 PLAN이 관리자 권한이 필요한 조치를 별도로 표시할 수 있습니다. GitHub CLI 계정은 Public/Distribution의 private catalog를 읽고, 설치 대상 개인 Execution repository와 Actions 설정을 수행할 권한이 있어야 합니다. 실제 필요 권한은 PLAN이 확인하며, 부족한 권한은 표시된 조치를 완료한 뒤 PLAN을 다시 실행하세요.
 
 ```sh
 PUBLIC_OWNER="${AGENTCOLLAB_GITHUB_OWNER:-AgentCollab}"
+gh auth login
+gh auth status
 gh repo clone "$PUBLIC_OWNER/AgentCollab-Public"
 cd AgentCollab-Public
-gh auth login
 ./install.sh plan
 ```
 
@@ -37,3 +40,7 @@ By default, PLAN/APPLY/VERIFY use `<parent-of-Public-checkout>/agentcollab`, reg
 설치 계획을 검토한 다음 적용하고 검증하는 자세한 절차는 [INSTALL.md](INSTALL.md)를 참고하세요.
 
 설치기는 저장소, 버전, 패키지 출처 또는 권한을 확인할 수 없으면 진행을 차단합니다. 차단을 우회하거나 다른 버전으로 자동 전환하지 않습니다.
+
+설치 후 PLAN/VERIFY에서 확인한 Web port를 사용해 `http://127.0.0.1:<Web port>/`를 브라우저에서 여세요. 기본 화면은 일반 사용자 모드입니다. Web UI의 **New Task**에서 요청을 입력하고 **Hand off task**를 선택해 첫 TASK를 등록한 뒤 readiness를 확인하세요. 준비가 완료되면 화면의 안내에 따라 시작할 수 있습니다. 관리자 작업이 필요한 경우에만 설치 중 정한 Web 관리자 비밀번호를 화면의 관리자 전환 입력란에 입력하세요. 자세한 운영·복구 절차는 [문제 해결 및 운영](TROUBLESHOOTING.md)을 참고하세요.
+
+현재 버전은 설치기의 PLAN/VERIFY 결과에 표시됩니다. 공개 설치기 문의는 [GitHub Issues](https://github.com/AgentCollab/AgentCollab-Public/issues), 설치기 릴리스는 [GitHub Releases](https://github.com/AgentCollab/AgentCollab-Public/releases)를 이용하세요. 설치 관련 Issue에는 비밀값이나 credential이 포함된 로그를 올리지 마세요.
