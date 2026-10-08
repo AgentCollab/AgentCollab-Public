@@ -394,6 +394,46 @@ def _last_json_object(output: str, required_status: str) -> dict | None:
     return found
 
 
+def _plan_web_port(plan: dict) -> int | str | None:
+    port = plan.get("web_port")
+    if isinstance(port, int) and 1 <= port <= 65535:
+        return port
+    if isinstance(port, str) and port.isdigit() and 1 <= int(port) <= 65535:
+        return int(port)
+    for step in plan.get("steps", []):
+        if not isinstance(step, dict):
+            continue
+        target = step.get("target", "")
+        if isinstance(target, str) and target.startswith("TCP port "):
+            value = target.removeprefix("TCP port ")
+            if value.isdigit() and 1 <= int(value) <= 65535:
+                return int(value)
+    return None
+
+
+def _plan_action_summary(plan: dict) -> tuple[str, str]:
+    counts: dict[str, int] = {}
+    notable = []
+    execution_repository = plan.get("execution_repository")
+    for step in plan.get("steps", []):
+        if not isinstance(step, dict):
+            continue
+        action = step.get("action")
+        target = step.get("target")
+        if not isinstance(action, str):
+            continue
+        if action not in {"PASS", "READY", "INFO", "REUSE"}:
+            counts[action] = counts.get(action, 0) + 1
+        if isinstance(target, str) and (target == execution_repository or target.startswith("Web service ")):
+            notable.append(f"{action} {target}")
+    web_service = plan.get("web_service")
+    if isinstance(web_service, dict) and isinstance(web_service.get("action"), str):
+        notable.append(f"{web_service['action']} {web_service.get('target', 'Web service')}")
+    count_summary = "; ".join(f"{name} {count}" for name, count in sorted(counts.items())) or "No changes"
+    notable_summary = "; ".join(dict.fromkeys(notable)) or "No service/repository action"
+    return count_summary, notable_summary
+
+
 def _browser_session_available(environment: dict[str, str] | None = None) -> bool:
     environment = os.environ if environment is None else environment
     if environment.get("SSH_CONNECTION") or environment.get("SSH_TTY"):
@@ -511,7 +551,7 @@ def _run_one_shot(args, *, command_fn, which, setup_command_fn, cwd, input_fn, b
 
         guidance = plan.get("runner_registration_guidance")
         runner_root = plan.get("runner_root") or (guidance.get("runner_root") if isinstance(guidance, dict) else None)
-        web_port = plan.get("web_port")
+        web_port = _plan_web_port(plan)
         print("One-shot install review")
         print(f"Resolved version:    {version}")
         print(f"Installer checkout:  {installer_checkout}")
@@ -520,10 +560,9 @@ def _run_one_shot(args, *, command_fn, which, setup_command_fn, cwd, input_fn, b
         print(f"Execution repository: {plan.get('execution_repository', 'unavailable')}")
         print(f"Web port:            {web_port if web_port is not None else 'unavailable'}")
         print(f"Web service:         {args.service_name}")
-        actions = [f"{step.get('action')}: {step.get('title') or step.get('id')}"
-                   for step in plan.get("steps", []) if isinstance(step, dict)
-                   and step.get("action") not in {"PASS", "READY", "INFO", None}]
-        print("Planned actions:     " + ("; ".join(actions) if actions else "No additional actions"))
+        action_counts, notable_actions = _plan_action_summary(plan)
+        print("Planned action counts: " + action_counts)
+        print("Key service/repo actions: " + notable_actions)
         try:
             answer = input_fn("Apply this plan? Type 'yes' to continue: ")
         except (EOFError, OSError):

@@ -541,6 +541,17 @@ class BootstrapTests(unittest.TestCase):
             {"DISPLAY": "localhost:10.0", "SSH_CONNECTION": "client server 22 22"}))
         self.assertTrue(bootstrap._browser_session_available({"WAYLAND_DISPLAY": "wayland-0"}))
 
+    def test_plan_summary_reads_port_from_plan_steps_and_uses_action_targets(self):
+        plan = {"execution_repository": "user/AgentCollab-Execution",
+                "web_service": {"action": "START", "target": "Web service test.service"},
+                "steps": [{"action": "CREATE", "target": "TCP port 18176"},
+                          {"action": "CREATE", "target": "user/AgentCollab-Execution"}]}
+        self.assertEqual(18176, bootstrap._plan_web_port(plan))
+        counts, notable = bootstrap._plan_action_summary(plan)
+        self.assertEqual("CREATE 2", counts)
+        self.assertIn("CREATE user/AgentCollab-Execution", notable)
+        self.assertIn("START Web service test.service", notable)
+
     def test_install_no_open_browser_is_respected(self):
         result, _calls, browsers, output = self.run_install_flow(no_open=True, browser_session=True)
         self.assertEqual(0, result)
