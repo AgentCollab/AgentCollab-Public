@@ -483,6 +483,26 @@ class BootstrapTests(unittest.TestCase):
         self.assertIn("http://127.0.0.1:8123/", output)
         self.assertIn("create the first TASK", output)
         self.assertEqual(["http://127.0.0.1:8123/"], browsers)
+        paths = [call[2].split("/contents/", 1)[1] for call in self.command_calls
+                 if call[:2] == ["gh", "api"] and "/contents/" in call[2]]
+        self.assertEqual(["channels/default.json", f"versions/{self.version}.json"], paths)
+        release_downloads = [call for call in self.command_calls
+                             if call[:3] == ["gh", "release", "download"]]
+        self.assertEqual(2, len(release_downloads))
+        self.assertEqual([self.version, self.version], [item[0] for item in self.downloaded])
+        self.assertEqual(1, sum(call == ["gh", "auth", "status", "--hostname", "github.com"]
+                                for call in self.command_calls))
+        self.assertEqual(1, sum(call[:3] == ["gh", "api", "user"] for call in self.command_calls))
+        setup_paths = {call[1][1] for call in calls}
+        self.assertEqual(1, len(setup_paths), "PLAN/APPLY/VERIFY must use the same materialized setup.py")
+        expected_runner = Path(bootstrap.__file__).resolve().parent.parent / "agentcollab" / "runner"
+        self.assertEqual({str(expected_runner)}, {
+            call[1][call[1].index("--runner-root") + 1] for call in calls
+        }, "one-shot default runner must be a child of installation root")
+        package_paths = {tuple(call[1][index + 1] for index, token in enumerate(call[1][:-1])
+                               if token in {"--runtime-package", "--execution-package"})
+                         for call in calls}
+        self.assertEqual(1, len(package_paths), "PLAN/APPLY/VERIFY must use the same verified package files")
 
     def test_install_decline_skips_apply(self):
         result, calls, browsers, output = self.run_install_flow(answer="no", browser_session=True)
@@ -527,7 +547,7 @@ class BootstrapTests(unittest.TestCase):
         self.assertIn("http://127.0.0.1:8123/", output)
         self.assertEqual([], browsers)
 
-    def test_install_forwards_same_install_selections_to_each_phase(self):
+    def test_install_forwards_same_install_selections_and_reuses_one_pair(self):
         selections = ["--version", self.version, "--installation-root", str(self.root / "chosen"),
                       "--runner-root", str(self.root / "chosen-runner"), "--control-repository",
                       "user/AgentCollab-Execution", "--web-port", "18123", "--service-name",
@@ -541,7 +561,14 @@ class BootstrapTests(unittest.TestCase):
         catalog_versions = [call[2].split("/contents/", 1)[1] for call in self.command_calls
                             if call[:2] == ["gh", "api"] and "/contents/" in call[2]
                             and "/versions/" in call[2]]
-        self.assertEqual([f"versions/{self.version}.json"] * 3, catalog_versions)
+        self.assertEqual([f"versions/{self.version}.json"], catalog_versions)
+        release_downloads = [call for call in self.command_calls if call[:3] == ["gh", "release", "download"]]
+        self.assertEqual(2, len(release_downloads), "release manifest and package pair should each be downloaded once")
+        package_asset_call = next(call for call in release_downloads
+                                  if sum(token == "--pattern" for token in call) == 2)
+        patterns = [package_asset_call[index + 1] for index, token in enumerate(package_asset_call[:-1])
+                    if token == "--pattern"]
+        self.assertEqual([self.runtime_name, self.execution_name], patterns)
 
     def test_install_web_open_exception_does_not_fail_success(self):
         def open_failure(_url):
