@@ -56,7 +56,29 @@ cd /srv/agentcollab-user/AgentCollab-Public
 
 Public 체크아웃은 설치 프로그램을 업데이트하거나 다시 clone할 때 사용하는 디렉터리입니다. `agentcollab/`에는 설치된 Runtime, persistent DATA, 서비스 설정, runner가 있으므로 checkout 정리 목적으로 삭제하지 마세요. 현재 Public installer는 자동 uninstall 단계를 제공하지 않습니다.
 
-## 설치 계획 만들기: PLAN
+## 빠른 설치: install
+
+일반 설치는 Public checkout에서 다음을 한 번 실행합니다.
+
+```sh
+./install.sh install
+```
+
+설치기는 exact Distribution package pair를 확인하고 canonical PLAN을 실행합니다. `PLAN_READY`와 요약을 확인한 뒤 `yes`를 입력하면 해당 PLAN의 정확한 `plan_sha256`으로 APPLY를 진행하고, 같은 버전과 경로 선택으로 VERIFY를 자동 실행합니다. 확인을 거절하거나 PLAN/APPLY/VERIFY 중 하나라도 실패하면 뒤 단계를 실행하지 않습니다. 비밀번호 입력이 필요한 경우 APPLY에서 제공되는 숨김 입력을 사용하세요.
+
+VERIFY가 `READY`이면 설치기는 선택된 포트의 `http://127.0.0.1:<port>/`와 첫 TASK 안내를 출력합니다. 로컬 그래픽 세션에서는 브라우저 열기를 best-effort로 시도합니다. Headless/SSH 환경에서는 URL 출력만 하며, 브라우저 오류는 READY 결과를 실패로 바꾸지 않습니다. 자동 열기를 끄려면 `--no-open-browser`를 지정하세요.
+
+```sh
+./install.sh install --no-open-browser
+```
+
+이 명령은 기존 설치, DATA, service, runner 또는 Execution repository를 이동·삭제·초기화하지 않습니다. 이미 설치한 환경은 PLAN을 먼저 검토하고 필요한 경우 아래 고급 절차를 사용하세요.
+
+## 고급 설치: 계획/적용/검증
+
+아래 절차는 PLAN, APPLY, VERIFY를 각각 실행해 검토하려는 경우에 사용합니다. 각 단계의 안전 계약은 `install`과 동일합니다.
+
+### 설치 계획 만들기: PLAN
 
 먼저 PLAN을 실행해 설치 대상과 변경 사항을 확인합니다.
 

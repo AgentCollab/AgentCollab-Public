@@ -439,6 +439,156 @@ class BootstrapTests(unittest.TestCase):
         index = self.capture["argv"].index("--web-port")
         self.assertEqual("18123", self.capture["argv"][index + 1])
 
+    def run_install_flow(self, *, answer="yes", apply_code=0, verify_status="READY",
+                         plan_status="PLAN_READY", no_open=False, browser_session=None,
+                         browser_fn=None, extra=()):
+        calls = []
+        browsers = []
+        plan = {"status": plan_status, "plan_sha256": "a" * 64,
+                "installation_root": "/tmp/agentcollab", "runner_root": "/tmp/agentcollab/runner",
+                "execution_repository": "user/AgentCollab-Execution", "web_port": 8123,
+                "steps": [{"id": "web", "action": "INSTALL", "title": "Install Web"}]}
+
+        def runner(argv, **kwargs):
+            phase = argv[2]
+            calls.append((phase, list(argv), kwargs))
+            if phase == "plan":
+                return SimpleNamespace(returncode=0 if plan_status == "PLAN_READY" else 2,
+                                       stdout=json.dumps(plan), stderr="")
+            if phase == "apply":
+                return SimpleNamespace(returncode=apply_code, stdout="", stderr="")
+            if phase == "verify":
+                return SimpleNamespace(returncode=0 if verify_status == "READY" else 2,
+                                       stdout=json.dumps({"status": verify_status, "web_port": 8123}), stderr="")
+            self.fail(f"unexpected phase: {phase}")
+
+        env = {"DISPLAY": ":0"} if browser_session is True else ({} if browser_session is False else None)
+        with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()) as stdout:
+            result = bootstrap.run_bootstrap(
+                ["install", "--manifest", str(self.manifest_path), *extra,
+                 *( ["--no-open-browser"] if no_open else [])],
+                command_fn=self.command, which=lambda _name: "/usr/bin/gh", setup_command_fn=runner,
+                cwd=self.root, input_fn=lambda _prompt: answer,
+                browser_fn=browser_fn or (lambda url: browsers.append(url)),
+                browser_session_fn=lambda: browser_session is True)
+        return result, calls, browsers, stdout.getvalue()
+
+    def test_install_happy_path_passes_exact_plan_digest_and_prints_web_url(self):
+        result, calls, browsers, output = self.run_install_flow(browser_session=True)
+        self.assertEqual(0, result)
+        self.assertEqual(["plan", "apply", "verify"], [phase for phase, _argv, _kwargs in calls])
+        apply_argv = calls[1][1]
+        self.assertEqual("a" * 64, apply_argv[apply_argv.index("--approved-plan-sha256") + 1])
+        self.assertNotIn("capture_output", calls[1][2], "APPLY must keep interactive credential prompts attached to the terminal")
+        self.assertIn("http://127.0.0.1:8123/", output)
+        self.assertIn("create the first TASK", output)
+        self.assertEqual(["http://127.0.0.1:8123/"], browsers)
+        paths = [call[2].split("/contents/", 1)[1] for call in self.command_calls
+                 if call[:2] == ["gh", "api"] and "/contents/" in call[2]]
+        self.assertEqual(["channels/default.json", f"versions/{self.version}.json"], paths)
+        release_downloads = [call for call in self.command_calls
+                             if call[:3] == ["gh", "release", "download"]]
+        self.assertEqual(2, len(release_downloads))
+        self.assertEqual([self.version, self.version], [item[0] for item in self.downloaded])
+        self.assertEqual(1, sum(call == ["gh", "auth", "status", "--hostname", "github.com"]
+                                for call in self.command_calls))
+        self.assertEqual(1, sum(call[:3] == ["gh", "api", "user"] for call in self.command_calls))
+        setup_paths = {call[1][1] for call in calls}
+        self.assertEqual(1, len(setup_paths), "PLAN/APPLY/VERIFY must use the same materialized setup.py")
+        expected_runner = Path(bootstrap.__file__).resolve().parent.parent / "agentcollab" / "runner"
+        self.assertEqual({str(expected_runner)}, {
+            call[1][call[1].index("--runner-root") + 1] for call in calls
+        }, "one-shot default runner must be a child of installation root")
+        package_paths = {tuple(call[1][index + 1] for index, token in enumerate(call[1][:-1])
+                               if token in {"--runtime-package", "--execution-package"})
+                         for call in calls}
+        self.assertEqual(1, len(package_paths), "PLAN/APPLY/VERIFY must use the same verified package files")
+
+    def test_install_decline_skips_apply(self):
+        result, calls, browsers, output = self.run_install_flow(answer="no", browser_session=True)
+        self.assertEqual(1, result)
+        self.assertEqual(["plan"], [phase for phase, _argv, _kwargs in calls])
+        self.assertEqual([], browsers)
+        self.assertIn("APPLY was not run", output)
+
+    def test_install_plan_failure_skips_apply(self):
+        result, calls, browsers, _output = self.run_install_flow(plan_status="BLOCKED", browser_session=True)
+        self.assertNotEqual(0, result)
+        self.assertEqual(["plan"], [phase for phase, _argv, _kwargs in calls])
+        self.assertEqual([], browsers)
+
+    def test_install_apply_failure_skips_verify(self):
+        result, calls, browsers, _output = self.run_install_flow(apply_code=7, browser_session=True)
+        self.assertEqual(7, result)
+        self.assertEqual(["plan", "apply"], [phase for phase, _argv, _kwargs in calls])
+        self.assertEqual([], browsers)
+
+    def test_install_verify_failure_has_no_ready_claim_or_browser_open(self):
+        result, calls, browsers, output = self.run_install_flow(verify_status="BLOCKED", browser_session=True)
+        self.assertNotEqual(0, result)
+        self.assertEqual(["plan", "apply", "verify"], [phase for phase, _argv, _kwargs in calls])
+        self.assertNotIn("installation is READY", output)
+        self.assertEqual([], browsers)
+
+    def test_install_headless_prints_url_without_opening_browser(self):
+        result, _calls, browsers, output = self.run_install_flow(browser_session=False)
+        self.assertEqual(0, result)
+        self.assertIn("http://127.0.0.1:8123/", output)
+        self.assertEqual([], browsers)
+
+    def test_browser_session_skips_ssh_even_with_forwarded_display(self):
+        self.assertFalse(bootstrap._browser_session_available(
+            {"DISPLAY": "localhost:10.0", "SSH_CONNECTION": "client server 22 22"}))
+        self.assertTrue(bootstrap._browser_session_available({"WAYLAND_DISPLAY": "wayland-0"}))
+
+    def test_plan_summary_reads_port_from_plan_steps_and_uses_action_targets(self):
+        plan = {"execution_repository": "user/AgentCollab-Execution",
+                "web_service": {"action": "START", "target": "Web service test.service"},
+                "steps": [{"action": "CREATE", "target": "TCP port 18176"},
+                          {"action": "CREATE", "target": "user/AgentCollab-Execution"}]}
+        self.assertEqual(18176, bootstrap._plan_web_port(plan))
+        counts, notable = bootstrap._plan_action_summary(plan)
+        self.assertEqual("CREATE 2", counts)
+        self.assertIn("CREATE user/AgentCollab-Execution", notable)
+        self.assertIn("START Web service test.service", notable)
+
+    def test_install_no_open_browser_is_respected(self):
+        result, _calls, browsers, output = self.run_install_flow(no_open=True, browser_session=True)
+        self.assertEqual(0, result)
+        self.assertIn("http://127.0.0.1:8123/", output)
+        self.assertEqual([], browsers)
+
+    def test_install_forwards_same_install_selections_and_reuses_one_pair(self):
+        selections = ["--version", self.version, "--installation-root", str(self.root / "chosen"),
+                      "--runner-root", str(self.root / "chosen-runner"), "--control-repository",
+                      "user/AgentCollab-Execution", "--web-port", "18123", "--service-name",
+                      "agentcollab-test.service", "--runner-selector", "linux-x64"]
+        result, calls, _browsers, _output = self.run_install_flow(extra=selections, browser_session=False)
+        self.assertEqual(0, result)
+        plan_argv, apply_argv, verify_argv = [call[1] for call in calls]
+        for phase_argv in (plan_argv, apply_argv, verify_argv):
+            for token in selections[2:]:
+                self.assertIn(token, phase_argv)
+        catalog_versions = [call[2].split("/contents/", 1)[1] for call in self.command_calls
+                            if call[:2] == ["gh", "api"] and "/contents/" in call[2]
+                            and "/versions/" in call[2]]
+        self.assertEqual([f"versions/{self.version}.json"], catalog_versions)
+        release_downloads = [call for call in self.command_calls if call[:3] == ["gh", "release", "download"]]
+        self.assertEqual(2, len(release_downloads), "release manifest and package pair should each be downloaded once")
+        package_asset_call = next(call for call in release_downloads
+                                  if sum(token == "--pattern" for token in call) == 2)
+        patterns = [package_asset_call[index + 1] for index, token in enumerate(package_asset_call[:-1])
+                    if token == "--pattern"]
+        self.assertEqual([self.runtime_name, self.execution_name], patterns)
+
+    def test_install_web_open_exception_does_not_fail_success(self):
+        def open_failure(_url):
+            raise OSError("no browser")
+        result, _calls, _browsers, output = self.run_install_flow(
+            browser_session=True, browser_fn=open_failure)
+        self.assertEqual(0, result)
+        self.assertIn("installation is READY", output)
+
     def test_installer_metadata_is_generic_and_public_has_no_private_package_bytes(self):
         metadata = json.loads(self.manifest_path.read_text(encoding="utf-8"))
         self.assertNotIn("version", metadata)

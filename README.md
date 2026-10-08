@@ -20,8 +20,12 @@ gh auth login
 gh auth status
 gh repo clone "$PUBLIC_OWNER/AgentCollab-Public"
 cd AgentCollab-Public
-./install.sh plan
+./install.sh install
 ```
+
+일반 설치는 `install` 한 번으로 진행합니다. 설치기가 먼저 PLAN과 요약을 표시하고, 사용자가 `yes`로 확인한 경우에만 APPLY한 뒤 자동 VERIFY를 실행합니다. VERIFY가 `READY`일 때 Web URL과 첫 TASK 안내를 출력합니다. 브라우저 열기는 로컬 그래픽 세션에서만 best-effort로 시도하며, `--no-open-browser`로 끌 수 있습니다.
+
+PLAN/APPLY/VERIFY를 각각 확인하는 고급 절차는 [설치 안내](INSTALL.md#고급-설치-계획적용검증)를 참고하세요.
 
 Set `AGENTCOLLAB_GITHUB_OWNER` to the organization that owns the environment's Public and Distribution repositories. The default is the production organization.
 
