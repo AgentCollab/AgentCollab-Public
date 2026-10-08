@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import hashlib
 import io
 import json
@@ -13,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import webbrowser
 import zipfile
 from pathlib import Path, PurePosixPath
 
@@ -358,7 +360,7 @@ def _download_packages(release: dict, directory: Path, run=None) -> tuple[bytes,
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("phase", nargs="?", choices=("plan", "apply", "verify"), default="plan")
+    parser.add_argument("phase", nargs="?", choices=("plan", "apply", "verify", "install"), default="plan")
     parser.add_argument("--manifest", type=Path, required=True, help=argparse.SUPPRESS)
     parser.add_argument("--version", help="exact immutable Distribution version")
     parser.add_argument("--channel", help="Distribution channel pointer: default, beta, or stable")
@@ -372,14 +374,165 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--skip-actions-variable", action="store_true")
     parser.add_argument("--skip-actions-credentials", action="store_true")
     parser.add_argument("--approved-plan-sha256")
+    parser.add_argument("--no-open-browser", action="store_true",
+                        help="do not attempt to open the Web UI after a successful install")
     return parser
 
 
+def _last_json_object(output: str, required_status: str) -> dict | None:
+    decoder = json.JSONDecoder()
+    found = None
+    for index, char in enumerate(output):
+        if char != "{":
+            continue
+        try:
+            value, _end = decoder.raw_decode(output[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict) and value.get("status") == required_status:
+            found = value
+    return found
+
+
+def _browser_session_available(environment: dict[str, str] | None = None) -> bool:
+    environment = os.environ if environment is None else environment
+    if environment.get("SSH_CONNECTION") or environment.get("SSH_TTY"):
+        return False
+    return bool(environment.get("DISPLAY") or environment.get("WAYLAND_DISPLAY"))
+
+
+def _run_one_shot(args, *, command_fn, which, setup_command_fn, cwd, input_fn, browser_fn,
+                  browser_session_fn):
+    if args.approved_plan_sha256:
+        raise BootstrapError("BLOCKED", "plan-approval", "Do not pass --approved-plan-sha256 to install; it creates a fresh PLAN.")
+    passthrough = []
+    for flag, value in (("--version", args.version), ("--channel", args.channel),
+                        ("--installation-root", args.installation_root),
+                        ("--control-repository", args.control_repository),
+                        ("--web-port", args.web_port), ("--service-name", args.service_name),
+                        ("--runner-root", args.runner_root)):
+        if value is not None:
+            passthrough.extend([flag, str(value)])
+    for selector in args.runner_selector or []:
+        passthrough.extend(["--runner-selector", selector])
+    if args.skip_actions_variable:
+        passthrough.append("--skip-actions-variable")
+    if args.skip_actions_credentials:
+        passthrough.append("--skip-actions-credentials")
+
+    plan_stdout, plan_stderr = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(plan_stdout), contextlib.redirect_stderr(plan_stderr):
+        plan_code = run_bootstrap(["plan", "--manifest", str(args.manifest), *passthrough],
+                                  command_fn=command_fn, which=which,
+                                  setup_command_fn=setup_command_fn, cwd=cwd,
+                                  input_fn=input_fn, browser_fn=browser_fn)
+    sys.stderr.write(plan_stderr.getvalue())
+    sys.stdout.write(plan_stdout.getvalue())
+    if plan_code:
+        return plan_code
+    plan = _last_json_object(plan_stdout.getvalue(), "PLAN_READY")
+    if not plan:
+        print("AgentCollab install: PLAN did not produce PLAN_READY; stopping before APPLY.", file=sys.stderr)
+        return 2
+    plan_sha256 = plan.get("plan_sha256")
+    if not _digest(plan_sha256):
+        print("AgentCollab install: PLAN_READY did not include a valid plan_sha256; stopping before APPLY.", file=sys.stderr)
+        return 2
+    resolved_version = None
+    for line in plan_stderr.getvalue().splitlines():
+        try:
+            evidence = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(evidence, dict) and evidence.get("phase") == "distribution-resolution":
+            resolved_version = evidence.get("resolved_version")
+            break
+    if not _valid_version(resolved_version):
+        print("AgentCollab install: exact resolved version is missing from PLAN evidence; stopping before APPLY.", file=sys.stderr)
+        return 2
+
+    guidance = plan.get("runner_registration_guidance")
+    runner_root = plan.get("runner_root") or (guidance.get("runner_root") if isinstance(guidance, dict) else None)
+    web_port = plan.get("web_port")
+    execution_repo = plan.get("execution_repository")
+    print("One-shot install review")
+    print(f"Resolved version:    {resolved_version}")
+    print(f"Installer checkout:  {Path(__file__).resolve().parent}")
+    print(f"Installation root:   {plan.get('installation_root', 'unavailable')}")
+    print(f"Runner root:         {runner_root or 'unavailable'}")
+    print(f"Execution repository: {execution_repo or 'unavailable'}")
+    print(f"Web port:            {web_port if web_port is not None else 'unavailable'}")
+    print(f"Web service:         {args.service_name}")
+    actions = [f"{step.get('action')}: {step.get('title') or step.get('id')}"
+               for step in plan.get("steps", []) if isinstance(step, dict)
+               and step.get("action") not in {"PASS", "READY", "INFO", None}]
+    print("Planned actions:     " + ("; ".join(actions) if actions else "No additional actions"))
+    try:
+        answer = input_fn("Apply this plan? Type 'yes' to continue: ")
+    except (EOFError, OSError):
+        answer = ""
+    if not isinstance(answer, str) or answer.strip().lower() != "yes":
+        print("Install cancelled; APPLY was not run.")
+        return 1
+
+    stable_options = []
+    skip_value = False
+    for item in passthrough:
+        if skip_value:
+            skip_value = False
+            continue
+        if item in {"--version", "--channel"}:
+            skip_value = True
+            continue
+        stable_options.append(item)
+    apply_args = ["apply", "--manifest", str(args.manifest), "--version", resolved_version,
+                  "--approved-plan-sha256", plan_sha256, *stable_options]
+    apply_code = run_bootstrap(apply_args, command_fn=command_fn, which=which,
+                               setup_command_fn=setup_command_fn, cwd=cwd,
+                               input_fn=input_fn, browser_fn=browser_fn)
+    if apply_code:
+        print("Install stopped: APPLY failed; VERIFY was not run.", file=sys.stderr)
+        return apply_code
+
+    verify_args = ["verify", "--manifest", str(args.manifest), "--version", resolved_version, *stable_options]
+    verify_stdout, verify_stderr = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(verify_stdout), contextlib.redirect_stderr(verify_stderr):
+        verify_code = run_bootstrap(verify_args, command_fn=command_fn, which=which,
+                                    setup_command_fn=setup_command_fn, cwd=cwd,
+                                    input_fn=input_fn, browser_fn=browser_fn)
+    sys.stderr.write(verify_stderr.getvalue())
+    sys.stdout.write(verify_stdout.getvalue())
+    verify = _last_json_object(verify_stdout.getvalue(), "READY")
+    if verify_code or not verify:
+        print("Install stopped: VERIFY did not report READY.", file=sys.stderr)
+        return verify_code or 2
+    port = verify.get("web_port", web_port)
+    if not isinstance(port, int) or not 1 <= port <= 65535:
+        print("Install stopped: READY did not provide a valid Web port.", file=sys.stderr)
+        return 2
+    url = f"http://127.0.0.1:{port}/"
+    print("AgentCollab installation is READY.")
+    print(f"Web UI: {url}")
+    print("Next: open the Web UI and create the first TASK.")
+    if not args.no_open_browser and browser_session_fn():
+        try:
+            browser_fn(url)
+        except Exception:
+            pass
+    return 0
+
+
 def run_bootstrap(argv=None, *, command_fn=_run, which=shutil.which,
-                  setup_command_fn=None, cwd: Path | None = None) -> int:
+                  setup_command_fn=None, cwd: Path | None = None, input_fn=input,
+                  browser_fn=webbrowser.open, browser_session_fn=_browser_session_available) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
     try:
+        if args.phase == "install":
+            return _run_one_shot(args, command_fn=command_fn, which=which,
+                                 setup_command_fn=setup_command_fn, cwd=cwd,
+                                 input_fn=input_fn, browser_fn=browser_fn,
+                                 browser_session_fn=browser_session_fn)
         if args.version is not None and args.channel is not None:
             raise BootstrapError("BLOCKED", "selector", "--version and --channel cannot be used together.")
         if args.phase == "apply" and args.version is None:
@@ -483,6 +636,15 @@ def run_bootstrap(argv=None, *, command_fn=_run, which=shutil.which,
                         print(f"Web port:           {web_port}")
                     sys.stdout.write(setup_stdout)
                 setup_stderr = getattr(result, "stderr", None)
+                if isinstance(setup_stderr, str) and setup_stderr:
+                    sys.stderr.write(setup_stderr)
+            elif args.phase == "verify":
+                result = runner(setup_args, check=False, cwd=runtime_root, env=environment,
+                                capture_output=True, text=True)
+                setup_stdout = getattr(result, "stdout", None)
+                setup_stderr = getattr(result, "stderr", None)
+                if isinstance(setup_stdout, str) and setup_stdout:
+                    sys.stdout.write(setup_stdout)
                 if isinstance(setup_stderr, str) and setup_stderr:
                     sys.stderr.write(setup_stderr)
             else:
