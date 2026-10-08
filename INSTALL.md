@@ -99,7 +99,7 @@ PLAN은 앞부분에 Installer checkout, Installation root, Runner root, Executi
 - Installation root와 Runner root가 의도한 위치인지
 - Execution repo와 Web port가 의도한 값인지
 - 요청한 선택자와 `resolved_version`이 의도와 일치하는지
-- Source 저장소, commit SHA, service branch가 올바른지
+- Source commit SHA와 service branch가 선택된 package provenance와 일치하는지
 - Runtime, Execution, release manifest의 검증이 통과했는지
 - PLAN의 모든 작업과 `plan_sha256`
 
