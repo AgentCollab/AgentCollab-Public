@@ -253,8 +253,24 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(0, result)
         self.assertEqual("work/694-auto-web-port", json.loads(stderr)["service_branch"])
 
+    def test_exact_candidate_with_safe_release_branch_is_accepted(self):
+        branch = "release/698-public-readiness-first-task"
+        self.configure_kind_and_branch("candidate", branch)
+        result, stderr = self.run_bootstrap(["--version", self.version])
+        self.assertEqual(0, result)
+        self.assertEqual(branch, json.loads(stderr)["service_branch"])
+
+    def test_exact_candidate_with_main_branch_is_accepted(self):
+        self.configure_kind_and_branch("candidate", "main")
+        result, stderr = self.run_bootstrap(["--version", self.version])
+        self.assertEqual(0, result)
+        self.assertEqual("main", json.loads(stderr)["service_branch"])
+
     def test_unsafe_candidate_service_branches_are_blocked(self):
-        for branch in ("work/../bad", "work/@{bad}", "work//topic", "work/.hidden", "work/topic.lock"):
+        for branch in (
+            "work/../bad", "work/@{bad}", "work//topic", "work/.hidden", "work/topic.lock",
+            "release/../bad", "release/@{bad}", "release//topic", "release/.hidden", "release/topic.lock",
+        ):
             with self.subTest(branch=branch):
                 self.configure_kind_and_branch("candidate", branch)
                 self.capture.clear()
@@ -262,6 +278,16 @@ class BootstrapTests(unittest.TestCase):
                 self.assertEqual(2, result)
                 self.assertEqual("release-verification", json.loads(stderr)["phase"])
                 self.assertNotIn("argv", self.capture, "invalid provenance must not execute setup")
+
+    def test_candidate_with_unsupported_service_branch_namespace_is_blocked(self):
+        for branch in ("feature/topic", "dev/topic", "release", "releaseCandidate/topic"):
+            with self.subTest(branch=branch):
+                self.configure_kind_and_branch("candidate", branch)
+                self.capture.clear()
+                result, stderr = self.run_bootstrap(["--version", self.version])
+                self.assertEqual(2, result)
+                self.assertEqual("release-verification", json.loads(stderr)["phase"])
+                self.assertNotIn("argv", self.capture, "unsupported provenance must not execute setup")
 
     def test_channel_candidate_kind_is_blocked_before_release_download(self):
         self.configure_kind_and_branch("candidate", "work/694-auto-web-port")

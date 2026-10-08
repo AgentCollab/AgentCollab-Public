@@ -252,9 +252,10 @@ def validate_release_manifest(version_record: dict, release_manifest_raw: bytes,
         raise BootstrapError("BLOCKED", "release-verification", "Private release service branch is invalid.")
     if version_record["kind"] == "release" and service_branch != "main":
         raise BootstrapError("BLOCKED", "release-verification", "Distribution kind=release requires service_branch=main.")
-    if version_record["kind"] == "candidate" and service_branch != "main" and not service_branch.startswith("work/"):
+    if (version_record["kind"] == "candidate" and service_branch != "main"
+            and not service_branch.startswith(("work/", "release/"))):
         raise BootstrapError("BLOCKED", "release-verification",
-                             "Distribution kind=candidate requires service_branch=main or a work/* branch.")
+                             "Distribution kind=candidate requires service_branch=main, work/*, or release/*.")
     if requested_selector["kind"] in {"default", "channel"} and service_branch != "main":
         raise BootstrapError("BLOCKED", "release-verification",
                              "Channel/default Distribution selection requires service_branch=main.")
