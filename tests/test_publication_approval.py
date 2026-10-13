@@ -95,6 +95,26 @@ class PublicationApprovalContractTests(unittest.TestCase):
             with self.subTest(action=action), self.assertRaises(ApprovalBlocked):
                 self.check(data)
 
+    def test_invalid_release_branch_refs_block_even_with_matching_attestation(self):
+        for branch in ("release/.hidden", "release/topic.lock", "release/@{bad}",
+                       "release//topic", "release/../bad", "release/topic!bad"):
+            data = list(fixture())
+            release = json.loads(data[1])
+            release["service_branch"] = branch
+            data[1] = raw(release)
+            record = json.loads(data[0])
+            record["release_manifest"]["sha256"] = digest(data[1])
+            data[0] = raw(record)
+            approval = json.loads(data[2])
+            approval["service_branch"] = branch
+            approval["release_manifest"] = record["release_manifest"]
+            approval["version_record"]["sha256"] = digest(data[0])
+            data[2] = raw(approval)
+            data[3]["version_record"]["sha256"] = digest(data[0])
+            data[3]["approval"]["sha256"] = digest(data[2])
+            with self.subTest(branch=branch), self.assertRaises(ApprovalBlocked):
+                self.check(data)
+
     def test_legacy_release_record_cannot_enter_candidate_v2_path(self):
         data = list(fixture())
         obj = json.loads(data[0])
