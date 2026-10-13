@@ -216,6 +216,34 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(0, result)
         self.assertEqual("work/694-auto-web-port", json.loads(stderr)["source"]["service_branch"])
 
+    def test_exact_release_branch_candidate_install_is_allowed_without_channel(self):
+        self.configure_kind_and_branch("candidate", "release/uat-777")
+        result, stderr = self.run_bootstrap(["--version", self.version])
+        self.assertEqual(0, result)
+        self.assertEqual("release/uat-777", json.loads(stderr)["source"]["service_branch"])
+        paths = [call[2].split("/contents/", 1)[1] for call in self.command_calls
+                 if call[:2] == ["gh", "api"] and "/contents/" in call[2]]
+        self.assertEqual([f"versions/{self.version}.json"], paths)
+
+    def test_release_branch_candidate_cannot_use_any_public_channel(self):
+        for selector in ([], ["--channel", "beta"]):
+            with self.subTest(selector=selector):
+                self.configure_kind_and_branch("candidate", "release/uat-777")
+                self.capture.clear()
+                self.downloaded.clear()
+                result, stderr = self.run_bootstrap(selector)
+                self.assertEqual(2, result)
+                self.assertEqual("version-record", json.loads(stderr)["phase"])
+                self.assertEqual([], self.downloaded)
+                self.assertNotIn("argv", self.capture)
+
+    def test_release_kind_with_release_branch_remains_blocked(self):
+        self.configure_kind_and_branch("release", "release/uat-777")
+        result, stderr = self.run_bootstrap(["--version", self.version])
+        self.assertEqual(2, result)
+        self.assertEqual("release-verification", json.loads(stderr)["phase"])
+        self.assertNotIn("argv", self.capture)
+
     def test_unsafe_candidate_service_branches_are_blocked(self):
         for branch in ("work/../bad", "work/@{bad}", "work//topic", "work/.hidden", "work/topic.lock"):
             with self.subTest(branch=branch):
