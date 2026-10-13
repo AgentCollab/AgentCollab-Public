@@ -57,7 +57,10 @@ def verify_approval_identity(*, version_record_raw: bytes,
     if (source.get("repository") != "lkhkhk/AgentCollab"
             or not isinstance(commit, str) or not _SHA40.fullmatch(commit)
             or not isinstance(origin, str) or not origin.startswith("release/")
-            or ".." in origin or "@{" in origin or "//" in origin):
+            or ".." in origin or "@{" in origin or "//" in origin
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]*[A-Za-z0-9_]", origin)
+            or any(not part or part.startswith(".") or part.endswith(".lock")
+                   for part in origin.split("/"))):
         raise ApprovalBlocked("source is not a valid release candidate")
     if (release.get("release_version") != name or release.get("release_tag") != name
             or version.get("release_tag") != name):
