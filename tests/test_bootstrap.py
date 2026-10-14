@@ -178,6 +178,11 @@ class BootstrapTests(unittest.TestCase):
         self.assertLess(self.command_calls.index(["gh", "auth", "status", "--hostname", "github.com"]),
                         next(i for i, call in enumerate(self.command_calls) if call[:2] == ["gh", "api"]))
         self.assertIn(str(work / "agentcollab"), self.capture["argv"])
+        self.assertEqual("agentcollab-web.service",
+                         self.capture["argv"][self.capture["argv"].index("--service-name") + 1])
+        self.assertNotIn("--web-profile", self.capture["argv"])
+        self.assertNotIn("--production-workspace-root", self.capture["argv"])
+        self.assertNotIn("--production-data-root", self.capture["argv"])
         self.assertNotIn("--web-port", self.capture["argv"])
         self.assertFalse((work / "agentcollab").exists())
         evidence = json.loads(stderr)
@@ -402,6 +407,72 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(0, result)
         index = self.capture["argv"].index("--web-port")
         self.assertEqual("18123", self.capture["argv"][index + 1])
+
+    def test_uat_profile_forwards_explicit_boundaries_and_isolated_service(self):
+        install_root = self.root / "isolated-uat-install"
+        production_root = self.root / "production/RUN"
+        production_data = production_root / "DATA"
+        result, _stderr = self.run_bootstrap([
+            "--installation-root", str(install_root), "--web-profile", "uat",
+            "--production-workspace-root", str(production_root),
+            "--production-data-root", str(production_data),
+            "--control-repository", "fixture/AgentCollab-UAT-Control",
+        ])
+        self.assertEqual(0, result)
+        command = self.capture["argv"]
+        self.assertEqual("uat", command[command.index("--web-profile") + 1])
+        self.assertEqual(str(production_root), command[command.index("--production-workspace-root") + 1])
+        self.assertEqual(str(production_data), command[command.index("--production-data-root") + 1])
+        self.assertEqual("fixture/AgentCollab-UAT-Control", command[command.index("--control-repository") + 1])
+        self.assertEqual("agentcollab-uat-web.service", command[command.index("--service-name") + 1])
+        self.assertNotEqual("agentcollab-web.service", command[command.index("--service-name") + 1])
+        self.assertFalse(install_root.exists(), "PLAN must not create the selected installation root")
+
+    def test_uat_profile_missing_production_boundary_fails_before_github_or_setup(self):
+        result, stderr = self.run_bootstrap([
+            "--web-profile", "uat", "--production-workspace-root", str(self.root / "production/RUN"),
+        ])
+        self.assertEqual(2, result)
+        self.assertIn("both --production-workspace-root and --production-data-root", stderr)
+        self.assertEqual([], self.command_calls, "invalid UAT selector must fail before authenticated GitHub reads")
+        self.assertNotIn("argv", self.capture, "invalid UAT selector must not invoke verified setup")
+
+    def test_uat_profile_rejects_invalid_or_overlapping_production_boundaries_early(self):
+        production_root = self.root / "production/RUN"
+        common = ["--web-profile", "uat", "--production-workspace-root", str(production_root),
+                  "--production-data-root", str(production_root / "DATA"),
+                  "--control-repository", "fixture/AgentCollab-UAT-Control"]
+        result, stderr = self.run_bootstrap([*common,
+            "--installation-root", str(production_root / "agentcollab-uat")])
+        self.assertEqual(2, result)
+        self.assertIn("overlaps the configured Production Workspace or DATA", stderr)
+        self.assertEqual([], self.command_calls)
+
+        result, stderr = self.run_bootstrap(["--web-profile", "uat",
+            "--production-workspace-root", str(production_root),
+            "--production-data-root", str(self.root / "outside/DATA"),
+            "--control-repository", "fixture/AgentCollab-UAT-Control"])
+        self.assertEqual(2, result)
+        self.assertIn("Production DATA root must be under", stderr)
+        self.assertEqual([], self.command_calls)
+
+    def test_uat_profile_rejects_prod_service_and_non_uat_control_repository_early(self):
+        production_root = self.root / "production/RUN"
+        common = ["--web-profile", "uat", "--production-workspace-root", str(production_root),
+                  "--production-data-root", str(production_root / "DATA"),
+                  "--control-repository", "fixture/AgentCollab-UAT-Control"]
+        result, stderr = self.run_bootstrap([*common, "--service-name", "agentcollab-web.service"])
+        self.assertEqual(2, result)
+        self.assertIn("isolated agentcollab-uat- namespace", stderr)
+        self.assertEqual([], self.command_calls)
+        self.assertNotIn("argv", self.capture)
+
+        result, stderr = self.run_bootstrap(["--web-profile", "uat",
+            "--production-workspace-root", str(production_root),
+            "--production-data-root", str(production_root / "DATA"),
+            "--control-repository", "fixture/AgentCollab-Execution"])
+        self.assertEqual(2, result)
+        self.assertIn("dedicated <owner>/AgentCollab-UAT-Control", stderr)
 
     def test_installer_metadata_is_generic_and_public_has_no_private_package_bytes(self):
         metadata = json.loads(self.manifest_path.read_text(encoding="utf-8"))

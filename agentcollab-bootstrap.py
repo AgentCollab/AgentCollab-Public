@@ -350,7 +350,13 @@ def _parser() -> argparse.ArgumentParser:
                         help="personal installation root (default: ./agentcollab from the current directory)")
     parser.add_argument("--control-repository", help="existing personal Execution repository to reuse")
     parser.add_argument("--web-port", type=int, help="explicit Web port (omitted preserves automatic port selection)")
-    parser.add_argument("--service-name", default="agentcollab-web.service")
+    parser.add_argument("--service-name", help="Web service unit (UAT defaults to agentcollab-uat-web.service)")
+    parser.add_argument("--web-profile", choices=("prod", "uat"), default="prod",
+                        help="verified Runtime Web profile (default: prod)")
+    parser.add_argument("--production-workspace-root", type=Path,
+                        help="explicit Production Workspace boundary required for UAT package setup")
+    parser.add_argument("--production-data-root", type=Path,
+                        help="explicit Production DATA boundary required for UAT package setup")
     parser.add_argument("--runner-root", type=Path)
     parser.add_argument("--runner-selector", action="append")
     parser.add_argument("--skip-actions-variable", action="store_true")
@@ -364,6 +370,41 @@ def run_bootstrap(argv=None, *, command_fn=_run, which=shutil.which,
     parser = _parser()
     args = parser.parse_args(argv)
     try:
+        installation_root = (args.installation_root.expanduser().resolve(strict=False) if args.installation_root
+                             else ((cwd or Path.cwd()) / "agentcollab").resolve(strict=False))
+        if args.web_profile == "uat":
+            if args.production_workspace_root is None or args.production_data_root is None:
+                raise BootstrapError("BLOCKED", "uat-selector",
+                                     "UAT requires both --production-workspace-root and --production-data-root.")
+            production_workspace = args.production_workspace_root.expanduser().resolve(strict=False)
+            production_data = args.production_data_root.expanduser().resolve(strict=False)
+            if not production_data.is_relative_to(production_workspace):
+                raise BootstrapError("BLOCKED", "uat-selector",
+                                     "Production DATA root must be under the explicit Production Workspace root.")
+            if (installation_root == production_workspace or installation_root.is_relative_to(production_workspace)
+                    or production_workspace.is_relative_to(installation_root)
+                    or installation_root == production_data or installation_root.is_relative_to(production_data)
+                    or production_data.is_relative_to(installation_root)):
+                raise BootstrapError("BLOCKED", "uat-selector",
+                                     "UAT installation root overlaps the configured Production Workspace or DATA.")
+            if (not isinstance(args.control_repository, str)
+                    or re.fullmatch(r"[A-Za-z0-9_.-]+/AgentCollab-UAT-Control", args.control_repository,
+                                    flags=re.IGNORECASE) is None):
+                raise BootstrapError("BLOCKED", "uat-selector",
+                                     "UAT requires an explicit dedicated <owner>/AgentCollab-UAT-Control repository.")
+            if (args.service_name and re.fullmatch(r"agentcollab-uat-[A-Za-z0-9_.@-]+\.service",
+                                                   args.service_name, flags=re.IGNORECASE) is None):
+                raise BootstrapError("BLOCKED", "uat-selector",
+                                     "UAT service name must use the isolated agentcollab-uat- namespace.")
+            service_name = args.service_name or "agentcollab-uat-web.service"
+        else:
+            if args.production_workspace_root is not None or args.production_data_root is not None:
+                raise BootstrapError("BLOCKED", "uat-selector",
+                                     "Production boundary arguments are only valid with --web-profile uat.")
+            if args.service_name and args.service_name.casefold().startswith("agentcollab-uat-"):
+                raise BootstrapError("BLOCKED", "uat-selector",
+                                     "An UAT service name requires --web-profile uat and explicit Production boundaries.")
+            service_name = args.service_name or "agentcollab-web.service"
         if args.version is not None and args.channel is not None:
             raise BootstrapError("BLOCKED", "selector", "--version and --channel cannot be used together.")
         if args.phase == "apply" and args.version is None:
@@ -382,8 +423,6 @@ def run_bootstrap(argv=None, *, command_fn=_run, which=shutil.which,
         require_github_auth(command_fn, which)
         version, version_record, requested_selector, version_record_sha256 = resolve_version(
             requested_version=args.version, requested_channel=args.channel, run=command_fn)
-        installation_root = (args.installation_root.expanduser().resolve(strict=False) if args.installation_root
-                             else ((cwd or Path.cwd()) / "agentcollab").resolve(strict=False))
         with tempfile.TemporaryDirectory(prefix="agentcollab-private-packages-") as temporary:
             download_dir = Path(temporary)
             release_raw = _download_release_manifest(version_record, download_dir, command_fn)
@@ -400,7 +439,11 @@ def run_bootstrap(argv=None, *, command_fn=_run, which=shutil.which,
                           "--installation-root", str(installation_root),
                           "--runtime-package", str(runtime_package),
                           "--execution-package", str(execution_package),
-                          "--service-name", args.service_name]
+                          "--service-name", service_name]
+            if args.web_profile == "uat":
+                setup_args.extend(["--web-profile", "uat",
+                                   "--production-workspace-root", str(args.production_workspace_root.expanduser().resolve(strict=False)),
+                                   "--production-data-root", str(args.production_data_root.expanduser().resolve(strict=False))])
             if args.web_port is not None:
                 setup_args.extend(["--web-port", str(args.web_port)])
             if args.control_repository:
