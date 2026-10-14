@@ -388,8 +388,9 @@ def run_bootstrap(argv=None, *, command_fn=_run, which=shutil.which,
                 raise BootstrapError("BLOCKED", "uat-selector",
                                      "UAT installation root overlaps the configured Production Workspace or DATA.")
             if (not isinstance(args.control_repository, str)
-                    or re.fullmatch(r"[A-Za-z0-9_.-]+/AgentCollab-UAT-Control", args.control_repository,
-                                    flags=re.IGNORECASE) is None):
+                    or re.fullmatch(
+                        r"[A-Za-z0-9-]+/AgentCollab-UAT-Control(?:-[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)?",
+                        args.control_repository, flags=re.IGNORECASE) is None):
                 raise BootstrapError("BLOCKED", "uat-selector",
                                      "UAT requires an explicit dedicated <owner>/AgentCollab-UAT-Control repository.")
             if (args.service_name and re.fullmatch(r"agentcollab-uat-[A-Za-z0-9_.@-]+\.service",

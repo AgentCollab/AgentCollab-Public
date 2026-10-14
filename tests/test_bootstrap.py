@@ -416,14 +416,14 @@ class BootstrapTests(unittest.TestCase):
             "--installation-root", str(install_root), "--web-profile", "uat",
             "--production-workspace-root", str(production_root),
             "--production-data-root", str(production_data),
-            "--control-repository", "fixture/AgentCollab-UAT-Control",
+            "--control-repository", "fixture/AgentCollab-UAT-Control-beta7",
         ])
         self.assertEqual(0, result)
         command = self.capture["argv"]
         self.assertEqual("uat", command[command.index("--web-profile") + 1])
         self.assertEqual(str(production_root), command[command.index("--production-workspace-root") + 1])
         self.assertEqual(str(production_data), command[command.index("--production-data-root") + 1])
-        self.assertEqual("fixture/AgentCollab-UAT-Control", command[command.index("--control-repository") + 1])
+        self.assertEqual("fixture/AgentCollab-UAT-Control-beta7", command[command.index("--control-repository") + 1])
         self.assertEqual("agentcollab-uat-web.service", command[command.index("--service-name") + 1])
         self.assertNotEqual("agentcollab-web.service", command[command.index("--service-name") + 1])
         self.assertFalse(install_root.exists(), "PLAN must not create the selected installation root")
@@ -467,12 +467,16 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual([], self.command_calls)
         self.assertNotIn("argv", self.capture)
 
-        result, stderr = self.run_bootstrap(["--web-profile", "uat",
-            "--production-workspace-root", str(production_root),
-            "--production-data-root", str(production_root / "DATA"),
-            "--control-repository", "fixture/AgentCollab-Execution"])
-        self.assertEqual(2, result)
-        self.assertIn("dedicated <owner>/AgentCollab-UAT-Control", stderr)
+        for repository in ("fixture/AgentCollab-Execution", "fixture/AgentCollab-UAT-ControlX",
+                           "fixture/AgentCollab-UAT-Control-beta7-", "../AgentCollab-UAT-Control-beta7"):
+            with self.subTest(repository=repository):
+                result, stderr = self.run_bootstrap(["--web-profile", "uat",
+                    "--production-workspace-root", str(production_root),
+                    "--production-data-root", str(production_root / "DATA"),
+                    "--control-repository", repository])
+                self.assertEqual(2, result)
+                self.assertIn("dedicated <owner>/AgentCollab-UAT-Control", stderr)
+                self.assertEqual([], self.command_calls)
 
     def test_installer_metadata_is_generic_and_public_has_no_private_package_bytes(self):
         metadata = json.loads(self.manifest_path.read_text(encoding="utf-8"))
