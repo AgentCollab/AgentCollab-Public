@@ -67,4 +67,12 @@ def plan_channel_promotion(*, channel: str, record_raw: bytes,
         "proposed_pointer_raw": intended,
         "proposed_pointer_sha256": hashlib.sha256(intended).hexdigest(),
         "no_change": current["content"] == intended,
+        "plan_status": "PLAN_ONLY",
+        "apply_authorized": False,
+        "apply_blockers": (
+            "no designated authenticated Release Admin is configured",
+            "no independent UAT/user-approval evidence provider is configured",
+            "no atomic GitHub channel writer is implemented",
+            "Source main and Distribution channel cannot be atomically leased together",
+        ),
     }

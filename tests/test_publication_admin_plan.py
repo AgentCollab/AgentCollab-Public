@@ -29,6 +29,9 @@ class PublicationAdminPlanTests(unittest.TestCase):
         self.assertIn("approval", pointer)
         self.assertEqual("default", pointer["channel"])
         self.assertFalse(result["no_change"])
+        self.assertEqual("PLAN_ONLY", result["plan_status"])
+        self.assertFalse(result["apply_authorized"])
+        self.assertTrue(any("atomic GitHub" in item for item in result["apply_blockers"]))
 
     def test_idempotent_plan_detects_exact_existing_pointer(self):
         initial = self.plan(channel="beta")

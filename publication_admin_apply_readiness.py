@@ -37,9 +37,12 @@ def validate_channel_apply_readiness(*, planned: dict, channel: str,
     if any(planned.get(field) != current[field] for field in required):
         raise ApprovalBlocked("publication plan is stale or candidate bytes changed")
     if current["no_change"]:
-        return {"status": "ALREADY_CURRENT", "channel": channel,
-                "pointer_sha256": current["proposed_pointer_sha256"]}
-    return {"status": "READY_FOR_ATOMIC_APPLY", "channel": channel,
+        return {"status": "NO_CHANGE_REQUIRED", "apply_authorized": False,
+                "channel": channel, "pointer_sha256": current["proposed_pointer_sha256"],
+                "blockers": current["apply_blockers"]}
+    return {"status": "APPLY_BLOCKED", "apply_authorized": False,
+            "channel": channel,
             "expected_blob_sha": current["expected_channel_blob_sha"],
             "pointer_raw": current["proposed_pointer_raw"],
-            "pointer_sha256": current["proposed_pointer_sha256"]}
+            "pointer_sha256": current["proposed_pointer_sha256"],
+            "blockers": current["apply_blockers"]}

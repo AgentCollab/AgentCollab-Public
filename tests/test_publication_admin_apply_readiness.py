@@ -27,13 +27,16 @@ class PublicationAdminApplyReadinessTests(unittest.TestCase):
             read_channel_snapshot=args["read_channel_snapshot"],
         )
 
-    def test_matching_fresh_evidence_is_ready_but_does_not_write(self):
+    def test_matching_fresh_evidence_still_blocks_apply_without_trust_or_atomic_writer(self):
         args = self.inputs()
         planned = self.make_plan(args)
         result = validate_channel_apply_readiness(planned=planned, **args)
-        self.assertEqual("READY_FOR_ATOMIC_APPLY", result["status"])
+        self.assertEqual("APPLY_BLOCKED", result["status"])
+        self.assertFalse(result["apply_authorized"])
         self.assertEqual("d" * 40, result["expected_blob_sha"])
         self.assertEqual(planned["proposed_pointer_raw"], result["pointer_raw"])
+        self.assertTrue(any("Release Admin" in item for item in result["blockers"]))
+        self.assertTrue(any("atomically leased" in item for item in result["blockers"]))
 
     def test_channel_changed_after_plan_blocks(self):
         args = self.inputs()
@@ -66,7 +69,8 @@ class PublicationAdminApplyReadinessTests(unittest.TestCase):
         args["read_channel_snapshot"] = lambda channel: {
             "sha": "d" * 40, "content": planned["proposed_pointer_raw"]}
         result = validate_channel_apply_readiness(planned=planned, **args)
-        self.assertEqual("ALREADY_CURRENT", result["status"])
+        self.assertEqual("NO_CHANGE_REQUIRED", result["status"])
+        self.assertFalse(result["apply_authorized"])
 
 
 if __name__ == "__main__":
