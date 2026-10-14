@@ -77,6 +77,17 @@ class GitHubReaderTests(unittest.TestCase):
         self.assertTrue(any("approval evidence provider" in item for item in report["blockers"]))
         self.assertTrue(all("token" not in str(item).lower() for item in report.values()))
 
+    def test_read_only_distribution_access_does_not_satisfy_release_admin_authority(self):
+        self.fake.pages[DISTRIBUTION_REPOSITORY] = [[
+            {"login": "dev01acservice", "permissions": {"pull": True}},
+        ]]
+        report = self.reader.inspect_authority()
+        self.assertEqual((), report["distribution_write_capable_accounts"])
+        self.assertFalse(report["actor_can_write_distribution"])
+        self.assertFalse(report["release_admin_designated"])
+        self.assertFalse(report["apply_permitted"])
+        self.assertTrue(any("exactly one" in item for item in report["blockers"]))
+
     def test_reads_distribution_bytes_and_checks_github_blob_identity(self):
         result = self.reader.read_distribution_file("channels/beta.json")
         self.assertEqual(DISTRIBUTION_REPOSITORY, result.repository)
