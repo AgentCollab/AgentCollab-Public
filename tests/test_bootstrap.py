@@ -9,6 +9,7 @@ import json
 import tempfile
 import unittest
 import zipfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -101,6 +102,7 @@ class BootstrapTests(unittest.TestCase):
         self.capture = {}
         self.catalog_failures = set()
         self.release_failures = set()
+        self.approval_comment = None
 
     def configure_kind_and_branch(self, kind="release", service_branch="main"):
         self.release["service_branch"] = service_branch
@@ -125,12 +127,48 @@ class BootstrapTests(unittest.TestCase):
         self.assets[self.runtime_name] = self.runtime
         self.assets[self.execution_name] = self.execution
 
+    def configure_approved_beta_pointer(self):
+        self.configure_kind_and_branch("candidate", "release/uat-779")
+        assertion = {
+            "schema_version": 1,
+            "type": "agentcollab-source-release-approval",
+            "source_repository": "lkhkhk/AgentCollab",
+            "source_main_sha": self.source_commit,
+            "release_sha": self.source_commit,
+            "version": self.version,
+            "runtime_sha256": digest(self.runtime),
+            "execution_sha256": digest(self.execution),
+            "manifest_sha256": digest(self.release_raw),
+            "uat_evidence": "https://github.com/lkhkhk/AgentCollab/issues/776#issuecomment-123",
+            "user_approval": "https://github.com/lkhkhk/AgentCollab/pull/793#issuecomment-456",
+        }
+        body = "[AGENTCOLLAB SOURCE APPROVAL ASSERTION]\n" + json.dumps(
+            assertion, sort_keys=True, separators=(",", ":"))
+        timestamp = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat().replace("+00:00", "Z")
+        self.approval_comment = {
+            "issue_url": "https://api.github.com/repos/AgentCollab/AgentCollab-Distribution/issues/3",
+            "user": {"login": "lkhkhk"}, "created_at": timestamp, "updated_at": timestamp, "body": body,
+        }
+        self.beta_pointer = {
+            "schema_version": 2, "product": "AgentCollab", "channel": "beta", "version": self.version,
+            "version_record": {"path": f"versions/{self.version}.json", "sha256": digest(self.record_raw)},
+            "publication_approval": {"repository": "AgentCollab/AgentCollab-Distribution", "issue_number": 3,
+                                     "comment_id": 50, "body_sha256": digest(body.encode())},
+            "release_manifest_sha256": digest(self.release_raw),
+            "packages": {"runtime_sha256": digest(self.runtime), "execution_sha256": digest(self.execution)},
+        }
+        self.catalog["channels/beta.json"] = json_bytes(self.beta_pointer)
+
     def command(self, argv, *, timeout=120, **_kwargs):
         self.command_calls.append(list(argv))
         if argv == ["gh", "auth", "status", "--hostname", "github.com"]:
             return SimpleNamespace(returncode=0, stdout="", stderr="")
         if argv[:3] == ["gh", "api", "user"]:
             return SimpleNamespace(returncode=0, stdout="user01\n", stderr="")
+        if argv[:2] == ["gh", "api"] and "/issues/comments/50" in argv[2]:
+            if self.approval_comment is None:
+                return SimpleNamespace(returncode=1, stdout="", stderr="not found")
+            return SimpleNamespace(returncode=0, stdout=json.dumps(self.approval_comment), stderr="")
         if argv[:2] == ["gh", "api"] and "/contents/" in argv[2]:
             path = argv[2].split("/contents/", 1)[1]
             if path in self.catalog_failures or path not in self.catalog:
@@ -178,6 +216,11 @@ class BootstrapTests(unittest.TestCase):
         self.assertLess(self.command_calls.index(["gh", "auth", "status", "--hostname", "github.com"]),
                         next(i for i, call in enumerate(self.command_calls) if call[:2] == ["gh", "api"]))
         self.assertIn(str(work / "agentcollab"), self.capture["argv"])
+        self.assertEqual("agentcollab-web.service",
+                         self.capture["argv"][self.capture["argv"].index("--service-name") + 1])
+        self.assertNotIn("--web-profile", self.capture["argv"])
+        self.assertNotIn("--production-workspace-root", self.capture["argv"])
+        self.assertNotIn("--production-data-root", self.capture["argv"])
         self.assertNotIn("--web-port", self.capture["argv"])
         self.assertFalse((work / "agentcollab").exists())
         evidence = json.loads(stderr)
@@ -216,6 +259,34 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(0, result)
         self.assertEqual("work/694-auto-web-port", json.loads(stderr)["source"]["service_branch"])
 
+    def test_exact_release_branch_candidate_install_is_allowed_without_channel(self):
+        self.configure_kind_and_branch("candidate", "release/uat-777")
+        result, stderr = self.run_bootstrap(["--version", self.version])
+        self.assertEqual(0, result)
+        self.assertEqual("release/uat-777", json.loads(stderr)["source"]["service_branch"])
+        paths = [call[2].split("/contents/", 1)[1] for call in self.command_calls
+                 if call[:2] == ["gh", "api"] and "/contents/" in call[2]]
+        self.assertEqual([f"versions/{self.version}.json"], paths)
+
+    def test_release_branch_candidate_cannot_use_any_public_channel(self):
+        for selector in ([], ["--channel", "beta"]):
+            with self.subTest(selector=selector):
+                self.configure_kind_and_branch("candidate", "release/uat-777")
+                self.capture.clear()
+                self.downloaded.clear()
+                result, stderr = self.run_bootstrap(selector)
+                self.assertEqual(2, result)
+                self.assertEqual("version-record", json.loads(stderr)["phase"])
+                self.assertEqual([], self.downloaded)
+                self.assertNotIn("argv", self.capture)
+
+    def test_release_kind_with_release_branch_remains_blocked(self):
+        self.configure_kind_and_branch("release", "release/uat-777")
+        result, stderr = self.run_bootstrap(["--version", self.version])
+        self.assertEqual(2, result)
+        self.assertEqual("release-verification", json.loads(stderr)["phase"])
+        self.assertNotIn("argv", self.capture)
+
     def test_unsafe_candidate_service_branches_are_blocked(self):
         for branch in ("work/../bad", "work/@{bad}", "work//topic", "work/.hidden", "work/topic.lock"):
             with self.subTest(branch=branch):
@@ -232,6 +303,51 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(2, result)
         self.assertEqual("version-record", json.loads(stderr)["phase"])
         self.assertEqual([], self.downloaded)
+
+    def test_approved_beta_v2_candidate_selector_verifies_authenticated_assertion(self):
+        self.configure_approved_beta_pointer()
+        result, stderr = self.run_bootstrap(["--channel", "beta"])
+        self.assertEqual(0, result, stderr)
+        self.assertEqual("release/uat-779", json.loads(stderr)["source"]["service_branch"])
+        self.assertTrue(any("issues/comments/50" in call[2] for call in self.command_calls if call[:2] == ["gh", "api"]))
+
+    def test_approved_beta_v2_blocks_edited_source_assertion_before_setup(self):
+        self.configure_approved_beta_pointer()
+        self.approval_comment["updated_at"] = "2099-01-01T00:00:00Z"
+        result, stderr = self.run_bootstrap(["--channel", "beta"])
+        self.assertEqual(2, result)
+        self.assertEqual("channel-approval", json.loads(stderr)["phase"])
+        self.assertNotIn("argv", self.capture)
+
+    def test_approved_beta_v2_blocks_untrusted_assertion_author(self):
+        self.configure_approved_beta_pointer()
+        self.approval_comment["user"] = {"login": "agentcollab-admin"}
+        result, stderr = self.run_bootstrap(["--channel", "beta"])
+        self.assertEqual(2, result)
+        self.assertEqual("channel-approval", json.loads(stderr)["phase"])
+        self.assertNotIn("argv", self.capture)
+
+    def test_approved_beta_v2_blocks_wrong_bound_source_sha_and_hashes(self):
+        self.configure_approved_beta_pointer()
+        comment = self.approval_comment
+        assertion = json.loads(comment["body"].split("\n", 1)[1])
+        assertion["source_main_sha"] = "0" * 40
+        comment["body"] = "[AGENTCOLLAB SOURCE APPROVAL ASSERTION]\n" + json.dumps(
+            assertion, sort_keys=True, separators=(",", ":"))
+        self.beta_pointer["publication_approval"]["body_sha256"] = digest(comment["body"].encode())
+        self.catalog["channels/beta.json"] = json_bytes(self.beta_pointer)
+        result, stderr = self.run_bootstrap(["--channel", "beta"])
+        self.assertEqual(2, result)
+        self.assertEqual("channel-approval", json.loads(stderr)["phase"])
+        self.assertNotIn("argv", self.capture)
+
+    def test_approved_beta_v2_blocks_pointer_package_digest_mismatch(self):
+        self.configure_approved_beta_pointer()
+        self.beta_pointer["packages"]["runtime_sha256"] = "0" * 64
+        self.catalog["channels/beta.json"] = json_bytes(self.beta_pointer)
+        result, stderr = self.run_bootstrap(["--channel", "beta"])
+        self.assertEqual(2, result)
+        self.assertEqual("channel-approval", json.loads(stderr)["phase"])
         self.assertNotIn("argv", self.capture)
 
     def test_channel_release_with_non_main_branch_is_blocked_before_setup(self):
@@ -374,6 +490,76 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(0, result)
         index = self.capture["argv"].index("--web-port")
         self.assertEqual("18123", self.capture["argv"][index + 1])
+
+    def test_uat_profile_forwards_explicit_boundaries_and_isolated_service(self):
+        install_root = self.root / "isolated-uat-install"
+        production_root = self.root / "production/RUN"
+        production_data = production_root / "DATA"
+        result, _stderr = self.run_bootstrap([
+            "--installation-root", str(install_root), "--web-profile", "uat",
+            "--production-workspace-root", str(production_root),
+            "--production-data-root", str(production_data),
+            "--control-repository", "fixture/AgentCollab-UAT-Control-beta7",
+        ])
+        self.assertEqual(0, result)
+        command = self.capture["argv"]
+        self.assertEqual("uat", command[command.index("--web-profile") + 1])
+        self.assertEqual(str(production_root), command[command.index("--production-workspace-root") + 1])
+        self.assertEqual(str(production_data), command[command.index("--production-data-root") + 1])
+        self.assertEqual("fixture/AgentCollab-UAT-Control-beta7", command[command.index("--control-repository") + 1])
+        self.assertEqual("agentcollab-uat-web.service", command[command.index("--service-name") + 1])
+        self.assertNotEqual("agentcollab-web.service", command[command.index("--service-name") + 1])
+        self.assertFalse(install_root.exists(), "PLAN must not create the selected installation root")
+
+    def test_uat_profile_missing_production_boundary_fails_before_github_or_setup(self):
+        result, stderr = self.run_bootstrap([
+            "--web-profile", "uat", "--production-workspace-root", str(self.root / "production/RUN"),
+        ])
+        self.assertEqual(2, result)
+        self.assertIn("both --production-workspace-root and --production-data-root", stderr)
+        self.assertEqual([], self.command_calls, "invalid UAT selector must fail before authenticated GitHub reads")
+        self.assertNotIn("argv", self.capture, "invalid UAT selector must not invoke verified setup")
+
+    def test_uat_profile_rejects_invalid_or_overlapping_production_boundaries_early(self):
+        production_root = self.root / "production/RUN"
+        common = ["--web-profile", "uat", "--production-workspace-root", str(production_root),
+                  "--production-data-root", str(production_root / "DATA"),
+                  "--control-repository", "fixture/AgentCollab-UAT-Control"]
+        result, stderr = self.run_bootstrap([*common,
+            "--installation-root", str(production_root / "agentcollab-uat")])
+        self.assertEqual(2, result)
+        self.assertIn("overlaps the configured Production Workspace or DATA", stderr)
+        self.assertEqual([], self.command_calls)
+
+        result, stderr = self.run_bootstrap(["--web-profile", "uat",
+            "--production-workspace-root", str(production_root),
+            "--production-data-root", str(self.root / "outside/DATA"),
+            "--control-repository", "fixture/AgentCollab-UAT-Control"])
+        self.assertEqual(2, result)
+        self.assertIn("Production DATA root must be under", stderr)
+        self.assertEqual([], self.command_calls)
+
+    def test_uat_profile_rejects_prod_service_and_non_uat_control_repository_early(self):
+        production_root = self.root / "production/RUN"
+        common = ["--web-profile", "uat", "--production-workspace-root", str(production_root),
+                  "--production-data-root", str(production_root / "DATA"),
+                  "--control-repository", "fixture/AgentCollab-UAT-Control"]
+        result, stderr = self.run_bootstrap([*common, "--service-name", "agentcollab-web.service"])
+        self.assertEqual(2, result)
+        self.assertIn("isolated agentcollab-uat- namespace", stderr)
+        self.assertEqual([], self.command_calls)
+        self.assertNotIn("argv", self.capture)
+
+        for repository in ("fixture/AgentCollab-Execution", "fixture/AgentCollab-UAT-ControlX",
+                           "fixture/AgentCollab-UAT-Control-beta7-", "../AgentCollab-UAT-Control-beta7"):
+            with self.subTest(repository=repository):
+                result, stderr = self.run_bootstrap(["--web-profile", "uat",
+                    "--production-workspace-root", str(production_root),
+                    "--production-data-root", str(production_root / "DATA"),
+                    "--control-repository", repository])
+                self.assertEqual(2, result)
+                self.assertIn("dedicated <owner>/AgentCollab-UAT-Control", stderr)
+                self.assertEqual([], self.command_calls)
 
     def test_installer_metadata_is_generic_and_public_has_no_private_package_bytes(self):
         metadata = json.loads(self.manifest_path.read_text(encoding="utf-8"))
