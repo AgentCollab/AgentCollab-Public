@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import zipfile
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
 PUBLIC_REPOSITORY = "AgentCollab/AgentCollab-Public"
@@ -91,18 +92,94 @@ def _validate_version_record(record: object, version: str) -> dict:
     return record
 
 
-def _validate_channel_pointer(pointer: object, channel: str) -> tuple[str, dict]:
+def _validate_channel_pointer(pointer: object, channel: str) -> tuple[str, dict, dict]:
     version = pointer.get("version") if isinstance(pointer, dict) else None
     record_ref = pointer.get("version_record") if isinstance(pointer, dict) else None
     expected_path = f"versions/{version}.json" if _valid_version(version) else None
-    if (not isinstance(pointer, dict) or pointer.get("schema_version") != 1
-            or set(pointer) != {"schema_version", "product", "channel", "version", "version_record"}
+    schema_version = pointer.get("schema_version") if isinstance(pointer, dict) else None
+    publication = pointer.get("publication_approval") if isinstance(pointer, dict) else None
+    expected_keys = ({"schema_version", "product", "channel", "version", "version_record"}
+                     if schema_version == 1 else
+                     {"schema_version", "product", "channel", "version", "version_record",
+                      "publication_approval", "release_manifest_sha256", "packages"})
+    if (not isinstance(pointer, dict) or schema_version not in {1, 2}
+            or set(pointer) != expected_keys
             or pointer.get("product") != "AgentCollab" or pointer.get("channel") != channel
             or expected_path is None or not isinstance(record_ref, dict)
             or set(record_ref) != {"path", "sha256"}
             or record_ref.get("path") != expected_path or not _digest(record_ref.get("sha256"))):
         raise BootstrapError("BLOCKED", "channel-pointer", "Distribution channel pointer is invalid or mismatched.")
-    return version, record_ref
+    if schema_version == 2:
+        packages = pointer.get("packages")
+        if (channel != "beta" or not isinstance(publication, dict)
+                or set(publication) != {"repository", "issue_number", "comment_id", "body_sha256"}
+                or publication.get("repository") != DISTRIBUTION_REPOSITORY
+                or not isinstance(publication.get("issue_number"), int) or publication["issue_number"] < 1
+                or not isinstance(publication.get("comment_id"), int) or publication["comment_id"] < 1
+                or not _digest(publication.get("body_sha256"))
+                or not _digest(pointer.get("release_manifest_sha256"))
+                or not isinstance(packages, dict)
+                or set(packages) != {"runtime_sha256", "execution_sha256"}
+                or not _digest(packages.get("runtime_sha256"))
+                or not _digest(packages.get("execution_sha256"))):
+            raise BootstrapError("BLOCKED", "channel-pointer", "Approved beta channel pointer v2 is invalid.")
+    return version, record_ref, pointer
+
+
+def _verify_channel_approval(pointer: dict, record: dict, release: dict, run=None) -> None:
+    """Verify the source-maintainer assertion pinned by an authenticated beta-v2 pointer."""
+    run = run or _run
+    approval = pointer["publication_approval"]
+    result = run(["gh", "api", f"repos/{DISTRIBUTION_REPOSITORY}/issues/comments/{approval['comment_id']}"])
+    if not result or result.returncode:
+        raise BootstrapError("BLOCKED", "channel-approval", "Pinned beta publication approval is unavailable.")
+    try:
+        comment = json.loads(result.stdout)
+        body = comment.get("body")
+        created = comment.get("created_at")
+        issue_url = comment.get("issue_url")
+        if (not isinstance(body, str) or _sha256(body.encode("utf-8")) != approval["body_sha256"]
+                or comment.get("updated_at") != created
+                or comment.get("user", {}).get("login") != "lkhkhk"
+                or issue_url != (f"https://api.github.com/repos/{DISTRIBUTION_REPOSITORY}/issues/"
+                                 f"{approval['issue_number']}")):
+            raise ValueError("approval issuer, identity, or immutable comment identity differs")
+        created_at = datetime.fromisoformat(created.replace("Z", "+00:00"))
+        if created_at.tzinfo is None or created_at > datetime.now(timezone.utc):
+            raise ValueError("approval assertion timestamp is invalid")
+        prefix = "[AGENTCOLLAB SOURCE APPROVAL ASSERTION]\n"
+        if not body.startswith(prefix):
+            raise ValueError("approval assertion envelope differs")
+        assertion_raw = body[len(prefix):]
+        assertion = json.loads(assertion_raw)
+        canonical = json.dumps(assertion, sort_keys=True, separators=(",", ":")) if isinstance(assertion, dict) else ""
+        expected = {
+            "schema_version": 1,
+            "type": "agentcollab-source-release-approval",
+            "source_repository": SOURCE_REPOSITORY,
+            "source_main_sha": release["source"]["commit"],
+            "release_sha": release["source"]["commit"],
+            "version": record["version"],
+            "runtime_sha256": release["packages"]["runtime"]["sha256"],
+            "execution_sha256": release["packages"]["execution"]["sha256"],
+            "manifest_sha256": record["release_manifest"]["sha256"],
+            "uat_evidence": assertion.get("uat_evidence") if isinstance(assertion, dict) else None,
+            "user_approval": assertion.get("user_approval") if isinstance(assertion, dict) else None,
+        }
+        if (assertion_raw != canonical or assertion != expected or not isinstance(expected["uat_evidence"], str)
+                or not re.fullmatch(r"https://github\.com/lkhkhk/AgentCollab/issues/\d+#issuecomment-\d+",
+                                    expected["uat_evidence"])
+                or not isinstance(expected["user_approval"], str)
+                or not re.fullmatch(r"https://github\.com/lkhkhk/AgentCollab/pull/\d+#issuecomment-\d+",
+                                    expected["user_approval"])):
+            raise ValueError("approval payload does not bind the channel artifact and evidence")
+        if (pointer["release_manifest_sha256"] != record["release_manifest"]["sha256"]
+                or pointer["packages"] != {"runtime_sha256": release["packages"]["runtime"]["sha256"],
+                                            "execution_sha256": release["packages"]["execution"]["sha256"]}):
+            raise ValueError("channel pointer package and manifest digests differ from the release")
+    except (AttributeError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+        raise BootstrapError("BLOCKED", "channel-approval",
+                             "Pinned beta publication approval is malformed, edited, stale, or mismatched.") from error
 
 
 def _read_catalog_json(path: str, run=None) -> tuple[dict, bytes]:
@@ -146,18 +223,23 @@ def resolve_version(*, requested_version: str | None, requested_channel: str | N
     if channel not in CHANNELS:
         raise BootstrapError("BLOCKED", "selector", "Requested channel is unsupported.")
     pointer, _raw = _read_catalog_json(f"channels/{channel}.json", run)
-    version, record_ref = _validate_channel_pointer(pointer, channel)
+    version, record_ref, _pointer = _validate_channel_pointer(pointer, channel)
     record, record_raw = _read_catalog_json(record_ref["path"], run)
     if _sha256(record_raw) != record_ref["sha256"]:
         raise BootstrapError("BLOCKED", "version-record", "Distribution version record SHA-256 mismatch.")
     record = _validate_version_record(record, version)
-    if record["kind"] != "release":
+    if _pointer["schema_version"] == 1 and record["kind"] != "release":
         raise BootstrapError("BLOCKED", "version-record",
-                             "Channel pointers may reference only Distribution kind=release versions.")
-    return version, record, {
+                             "Legacy channel pointers may reference only Distribution kind=release versions.")
+    selector = {
         "kind": "default" if requested_channel is None else "channel",
         "value": channel,
-    }, _sha256(record_raw)
+    }
+    if _pointer["schema_version"] == 2:
+        if record["kind"] != "candidate":
+            raise BootstrapError("BLOCKED", "channel-approval", "beta-v2 publication pointers may select only approved candidates.")
+        selector["channel_pointer"] = _pointer
+    return version, record, selector, _sha256(record_raw)
 
 
 def _read_zip(raw: bytes, kind: str, release: dict) -> tuple[dict, bytes]:
@@ -205,7 +287,8 @@ def _read_zip(raw: bytes, kind: str, release: dict) -> tuple[dict, bytes]:
 
 
 def validate_release_manifest(version_record: dict, release_manifest_raw: bytes,
-                              requested_selector: dict) -> dict:
+                              requested_selector: dict, run=None) -> dict:
+    run = run or _run
     if _sha256(release_manifest_raw) != version_record["release_manifest"]["sha256"]:
         raise BootstrapError("BLOCKED", "release-verification", "Private release manifest SHA-256 mismatch.")
     try:
@@ -231,13 +314,21 @@ def validate_release_manifest(version_record: dict, release_manifest_raw: bytes,
     service_branch = release["service_branch"]
     if not _valid_service_branch(service_branch):
         raise BootstrapError("BLOCKED", "release-verification", "Private release service branch is invalid.")
+    pointer = requested_selector.get("channel_pointer")
+    if pointer is not None:
+        if version_record["kind"] != "candidate":
+            raise BootstrapError("BLOCKED", "channel-approval",
+                                 "beta-v2 publication pointers may select only approved candidates.")
+        _verify_channel_approval(pointer, version_record, release, run)
+        requested_selector["approved_candidate"] = True
     if version_record["kind"] == "release" and service_branch != "main":
         raise BootstrapError("BLOCKED", "release-verification", "Distribution kind=release requires service_branch=main.")
     if (version_record["kind"] == "candidate" and service_branch != "main"
             and not service_branch.startswith(("work/", "release/"))):
         raise BootstrapError("BLOCKED", "release-verification",
                              "Distribution kind=candidate requires service_branch=main, work/* or release/*.")
-    if requested_selector["kind"] in {"default", "channel"} and service_branch != "main":
+    if (requested_selector["kind"] in {"default", "channel"} and service_branch != "main"
+            and not requested_selector.get("approved_candidate")):
         raise BootstrapError("BLOCKED", "release-verification",
                              "Channel/default Distribution selection requires service_branch=main.")
     for kind in ("runtime", "execution"):
@@ -427,7 +518,7 @@ def run_bootstrap(argv=None, *, command_fn=_run, which=shutil.which,
         with tempfile.TemporaryDirectory(prefix="agentcollab-private-packages-") as temporary:
             download_dir = Path(temporary)
             release_raw = _download_release_manifest(version_record, download_dir, command_fn)
-            release = validate_release_manifest(version_record, release_raw, requested_selector)
+            release = validate_release_manifest(version_record, release_raw, requested_selector, command_fn)
             runtime_raw, execution_raw = _download_packages(release, download_dir, command_fn)
             _release, _runtime_manifest, _setup_bytes = verify_bundle(release, runtime_raw, execution_raw)
             runtime_package = download_dir / release["packages"]["runtime"]["filename"]

@@ -9,6 +9,7 @@ import json
 import tempfile
 import unittest
 import zipfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -101,6 +102,7 @@ class BootstrapTests(unittest.TestCase):
         self.capture = {}
         self.catalog_failures = set()
         self.release_failures = set()
+        self.approval_comment = None
 
     def configure_kind_and_branch(self, kind="release", service_branch="main"):
         self.release["service_branch"] = service_branch
@@ -125,12 +127,48 @@ class BootstrapTests(unittest.TestCase):
         self.assets[self.runtime_name] = self.runtime
         self.assets[self.execution_name] = self.execution
 
+    def configure_approved_beta_pointer(self):
+        self.configure_kind_and_branch("candidate", "release/uat-779")
+        assertion = {
+            "schema_version": 1,
+            "type": "agentcollab-source-release-approval",
+            "source_repository": "lkhkhk/AgentCollab",
+            "source_main_sha": self.source_commit,
+            "release_sha": self.source_commit,
+            "version": self.version,
+            "runtime_sha256": digest(self.runtime),
+            "execution_sha256": digest(self.execution),
+            "manifest_sha256": digest(self.release_raw),
+            "uat_evidence": "https://github.com/lkhkhk/AgentCollab/issues/776#issuecomment-123",
+            "user_approval": "https://github.com/lkhkhk/AgentCollab/pull/793#issuecomment-456",
+        }
+        body = "[AGENTCOLLAB SOURCE APPROVAL ASSERTION]\n" + json.dumps(
+            assertion, sort_keys=True, separators=(",", ":"))
+        timestamp = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat().replace("+00:00", "Z")
+        self.approval_comment = {
+            "issue_url": "https://api.github.com/repos/AgentCollab/AgentCollab-Distribution/issues/3",
+            "user": {"login": "lkhkhk"}, "created_at": timestamp, "updated_at": timestamp, "body": body,
+        }
+        self.beta_pointer = {
+            "schema_version": 2, "product": "AgentCollab", "channel": "beta", "version": self.version,
+            "version_record": {"path": f"versions/{self.version}.json", "sha256": digest(self.record_raw)},
+            "publication_approval": {"repository": "AgentCollab/AgentCollab-Distribution", "issue_number": 3,
+                                     "comment_id": 50, "body_sha256": digest(body.encode())},
+            "release_manifest_sha256": digest(self.release_raw),
+            "packages": {"runtime_sha256": digest(self.runtime), "execution_sha256": digest(self.execution)},
+        }
+        self.catalog["channels/beta.json"] = json_bytes(self.beta_pointer)
+
     def command(self, argv, *, timeout=120, **_kwargs):
         self.command_calls.append(list(argv))
         if argv == ["gh", "auth", "status", "--hostname", "github.com"]:
             return SimpleNamespace(returncode=0, stdout="", stderr="")
         if argv[:3] == ["gh", "api", "user"]:
             return SimpleNamespace(returncode=0, stdout="user01\n", stderr="")
+        if argv[:2] == ["gh", "api"] and "/issues/comments/50" in argv[2]:
+            if self.approval_comment is None:
+                return SimpleNamespace(returncode=1, stdout="", stderr="not found")
+            return SimpleNamespace(returncode=0, stdout=json.dumps(self.approval_comment), stderr="")
         if argv[:2] == ["gh", "api"] and "/contents/" in argv[2]:
             path = argv[2].split("/contents/", 1)[1]
             if path in self.catalog_failures or path not in self.catalog:
@@ -265,6 +303,51 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(2, result)
         self.assertEqual("version-record", json.loads(stderr)["phase"])
         self.assertEqual([], self.downloaded)
+
+    def test_approved_beta_v2_candidate_selector_verifies_authenticated_assertion(self):
+        self.configure_approved_beta_pointer()
+        result, stderr = self.run_bootstrap(["--channel", "beta"])
+        self.assertEqual(0, result, stderr)
+        self.assertEqual("release/uat-779", json.loads(stderr)["source"]["service_branch"])
+        self.assertTrue(any("issues/comments/50" in call[2] for call in self.command_calls if call[:2] == ["gh", "api"]))
+
+    def test_approved_beta_v2_blocks_edited_source_assertion_before_setup(self):
+        self.configure_approved_beta_pointer()
+        self.approval_comment["updated_at"] = "2099-01-01T00:00:00Z"
+        result, stderr = self.run_bootstrap(["--channel", "beta"])
+        self.assertEqual(2, result)
+        self.assertEqual("channel-approval", json.loads(stderr)["phase"])
+        self.assertNotIn("argv", self.capture)
+
+    def test_approved_beta_v2_blocks_untrusted_assertion_author(self):
+        self.configure_approved_beta_pointer()
+        self.approval_comment["user"] = {"login": "agentcollab-admin"}
+        result, stderr = self.run_bootstrap(["--channel", "beta"])
+        self.assertEqual(2, result)
+        self.assertEqual("channel-approval", json.loads(stderr)["phase"])
+        self.assertNotIn("argv", self.capture)
+
+    def test_approved_beta_v2_blocks_wrong_bound_source_sha_and_hashes(self):
+        self.configure_approved_beta_pointer()
+        comment = self.approval_comment
+        assertion = json.loads(comment["body"].split("\n", 1)[1])
+        assertion["source_main_sha"] = "0" * 40
+        comment["body"] = "[AGENTCOLLAB SOURCE APPROVAL ASSERTION]\n" + json.dumps(
+            assertion, sort_keys=True, separators=(",", ":"))
+        self.beta_pointer["publication_approval"]["body_sha256"] = digest(comment["body"].encode())
+        self.catalog["channels/beta.json"] = json_bytes(self.beta_pointer)
+        result, stderr = self.run_bootstrap(["--channel", "beta"])
+        self.assertEqual(2, result)
+        self.assertEqual("channel-approval", json.loads(stderr)["phase"])
+        self.assertNotIn("argv", self.capture)
+
+    def test_approved_beta_v2_blocks_pointer_package_digest_mismatch(self):
+        self.configure_approved_beta_pointer()
+        self.beta_pointer["packages"]["runtime_sha256"] = "0" * 64
+        self.catalog["channels/beta.json"] = json_bytes(self.beta_pointer)
+        result, stderr = self.run_bootstrap(["--channel", "beta"])
+        self.assertEqual(2, result)
+        self.assertEqual("channel-approval", json.loads(stderr)["phase"])
         self.assertNotIn("argv", self.capture)
 
     def test_channel_release_with_non_main_branch_is_blocked_before_setup(self):
