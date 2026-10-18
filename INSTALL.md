@@ -60,7 +60,7 @@ cd /srv/agentcollab-user
 ./AgentCollab-Public/install.sh plan --version VERSION
 ```
 
-`--version`과 `--channel`은 함께 지정할 수 없습니다. Candidate는 정확한 `--version`으로만 선택할 수 있습니다. Channel/default 포인터가 가리키는 버전은 `kind=release`여야 하고 Source `main`에서 만들어져야 합니다. 현재 사용 가능한 stable 버전이 없다면 `stable` 선택은 차단될 수 있습니다.
+`--version`과 `--channel`은 함께 지정할 수 없습니다. 일반 Candidate는 정확한 `--version`으로 선택하며, 이 경우 채널 포인터를 거치지 않습니다. 기존 schema-v1 Channel/default 포인터는 `kind=release` 버전만 선택할 수 있습니다. 별도로 승인된 schema-v2 beta 채널 포인터는 승인 증거 검증을 거쳐 `kind=candidate` 버전을 선택할 수 있습니다. 현재 사용 가능한 stable 버전이 없다면 `stable` 선택은 차단될 수 있습니다.
 
 버전이 결정된 뒤에는 설치기가 다른 버전으로 다시 선택하거나 대체하지 않습니다.
 
